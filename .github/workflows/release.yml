@@ -1,0 +1,32 @@
+# Release workflow for the public mirror. The internal repo is canonical;
+# this file is injected at publication time as .github/workflows/release.yml.
+# Fires on vX.Y.Z tags pushed by promote-public-snapshot.sh (--bump/--tag)
+# and publishes a GitHub Release with binaries via goreleaser.
+name: release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # goreleaser derives the changelog from tag-to-tag history
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

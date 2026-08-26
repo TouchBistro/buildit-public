@@ -1,0 +1,57 @@
+# goreleaser config for the public mirror (TouchBistro/buildit-public). The
+# internal repo is canonical; this file is injected at publication time.
+# Release flow: promote-public-snapshot.sh --auto/--bump/--tag pushes a vX.Y.Z
+# tag (CI runs --auto on every master merge); .github/workflows/release.yml
+# (also injected) runs goreleaser against that tag and publishes the GitHub
+# Release.
+version: 2
+
+project_name: buildit
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  -
+    env:
+      - CGO_ENABLED=0
+    # {{.Version}} (the tag) — consumers should see the semver in
+    # `buildit --version`. Matches the internal .goreleaser.yml's ldflags
+    # convention only; platforms are deliberately broader than internal.
+    ldflags:
+      - -s -w -X github.com/TouchBistro/buildit/cmd.version=v{{.Version}}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  version_template: "volatile"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+    - '^docs:'
+    - '^test:'
+
+release:
+  github:
+    owner: TouchBistro
+    name: buildit-public
+  name_template: "{{.ProjectName}}-v{{.Version}}"

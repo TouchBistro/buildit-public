@@ -1,0 +1,228 @@
+package resource
+
+import (
+	"context"
+
+	"github.com/TouchBistro/goutils/color"
+	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
+
+	// "github.com/aws/aws-sdk-go-v2/aws"
+	// "github.com/aws/aws-sdk-go-v2/service/${aws_service_name}"
+	// "github.com/aws/aws-sdk-go-v2/service/${aws_service_name}/types"
+)
+
+
+/*
+
+  ** IMPORTANT **
+
+  When creating a new buildit resource file using thie template 
+  make a copy of this file to a new source file named resource_name.go 
+
+  then find & replace the following with 
+    ResourceTypeName > Go type for the new resource, e.g SecurityGroup 
+	${resourceType} > human readable resource description, e.g security group
+*/
+
+// ResourceTypeName represents a ${resourcetype} resource
+type ResourceTypeName struct {
+	DependsOn  []string          `yaml:"dependsOn"`
+	Tags       map[string]string `yaml:"tags"`
+	Name       string            `yaml:"-"`
+	GlobalTags map[string]string `yaml:"-"`
+}
+
+// Identifier returns the unique id for the resource
+func (r ResourceTypeName) Identifier() string {
+	return r.Name
+}
+
+// Normalize will set any default values or sanitize/clean up any necessary fields
+func (r *ResourceTypeName) Normalize(ctx context.Context) {
+
+	// Merge globalTags to ${resourcetype} tags, if key is not already present
+	// later we'll use sg.Tags to add/update tags
+	if r.Tags == nil {
+		r.Tags = make(map[string]string)
+	}
+	ResourceTags(r.Tags).Merge(r.GlobalTags)
+
+	// TODO: any other nprmalizaitons
+}
+
+// Validate the ${resourcetype} input
+func (r ResourceTypeName) Validate(ctx context.Context) error {
+
+	var errorMsgs []string
+
+	if r.Identifier() == "" {
+		errorMsgs = append(errorMsgs, "${resourcetype} name cannot be empty")
+	}
+
+	// TODO: other pre-run validation for ${resourcetype}
+
+	if errorMsgs == nil {
+		return nil
+	}
+
+	return &ValidationError{
+		ResourceIdentifier: r.Identifier(),
+		ResourceType:       "${resourcetype}",
+		Messages:           errorMsgs,
+	}
+}
+
+// Apply builds the ${resourcetype}
+func (r ResourceTypeName) Apply(ctx context.Context) error {
+
+	log.Debugf("creating ${resourcetype} %v", r.Identifier())
+
+	diffs, err := r.Compare(ctx)
+	if err != nil {
+		return err
+	}
+
+	if diffs == nil {
+		log.WithFields(log.Fields{
+			"Name": r.Identifier(),
+		}).Info("no updates required")
+		return nil
+	}
+
+	//if diff found & existing resource exists...
+	if diffs.AWSResource() != nil {
+		log.WithField("Name", r.Identifier()).Info("${resourcetype} already exists, updating")
+		for _, d := range diffs.Differences() {
+			log.Debug(d)
+		}
+		err = r.applyDiffs(ctx, diffs)
+		if err != nil {
+			return errors.Wrapf(err, "failed to update ${resourcetype} %v", r.Identifier())
+		}
+		return nil
+	}
+
+	return r.apply(ctx)
+}
+
+// Destroy the ${resourcetype}
+func (r ResourceTypeName) Destroy(ctx context.Context) error {
+
+	log.Debugf("destroying ${resourcetype} %v", r.Identifier())
+
+	existing, err := r.fetchExisting(ctx)
+	if err != nil {
+		return errors.Wrapf(err, "error finding ${resourcetype} %v", r.Identifier())
+	}
+
+	if existing == nil {
+		log.WithFields(log.Fields{
+			"Name": r.Identifier(),
+		}).Info("${resourcetype} does not exist, nothing to destroy, skippping ")
+		return nil
+	}
+
+	// TODO: delete ${resourcetype} code here
+
+	log.WithFields(log.Fields{
+		"Name": r.Identifier(),
+	}).Info(color.Red("${resourcetype} destroyed"))
+	return nil
+}
+
+// ResourceTypeNameDiff respresnts diffs between ${resourcetype} definition & AWS representation
+type ResourceTypeNameDiff struct {
+	BaseResourceDiff
+
+	// private diff details
+	// TODO: other fields here
+	tagsDiff     bool
+	tagsToAdd    ResourceTags
+	tagsToDelete ResourceTags
+}
+
+// Compare fetches the existing ${resourcetype} and if it exists, checks if this
+// resource is equal to the corresponding AWS ${resourcetype}
+func (r ResourceTypeName) Compare(ctx context.Context) (ResourceDiff, error) {
+
+	existing, err := r.fetchExisting(ctx)
+	if err != nil {
+		return nil, errors.Wrapf(err, "error fetching aws resource for %v", r.Identifier())
+	}
+
+	diffs := &ResourceTypeNameDiff{}
+
+	if existing == nil {
+		diffs.Messages = append(diffs.Messages, "${resourcetype} does not exist")
+		return diffs, nil
+	}
+
+	diffs.Resource = existing
+
+	// comparing description
+
+	// TODO: compare ${resourcetype} code here
+
+	// tags
+	// TODO: compare ${resourcetype} tags here
+
+	// return
+	return diffs, nil
+}
+
+// fetchExisting fetches ${resourcetype} if exists
+func (r ResourceTypeName) fetchExisting(ctx context.Context) (*ResourceTypeName, error) {
+
+	// TODO: code to fetch existing resource from aws, convert it to ResourceTypeName (buildit) type.
+
+	return nil, nil
+}
+
+// apply provisions a new ${resourcetype}
+func (r ResourceTypeName) apply(ctx context.Context) error {
+
+	// TODO: provision new ${resourcetype} code here ...
+
+	log.WithFields(log.Fields{
+		"Name": r.Identifier(),
+	}).Info(color.Green("${resourcetype} created"))
+
+	// wait for the creation
+	// TODO: if required, any wait code here...
+
+	return nil
+}
+
+// applyDiffs applies diffs to an existing ${resourcetype}
+func (r ResourceTypeName) applyDiffs(ctx context.Context, diffs ResourceDiff) error {
+
+	if diffs == nil {
+		log.WithFields(log.Fields{
+			"Name": r.Identifier(),
+		}).Info("no updates required for ${resourcetype}")
+		return nil
+	}
+
+	resDiffs, ok := diffs.(*ResourceTypeNameDiff)
+	if !ok {
+		return errors.New("invalid diff type supplied")
+	}
+
+	// fetch existing sg
+	existing, ok := resDiffs.Resource.(ResourceTypeName)
+	if !ok {
+		return errors.Errorf("cannot retrieve existing ${resourcetype}")
+	}
+
+	var err error
+	_ = err 
+	// TODO: apply diff code for ${resourcetype}
+	_ = existing
+
+	log.WithFields(log.Fields{
+		"Name": r.Identifier(),
+	}).Info(color.Yellow("${resourcetype} updated"))
+
+	return nil
+}
