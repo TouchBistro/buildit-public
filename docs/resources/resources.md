@@ -7,6 +7,7 @@
 - [Bedrock Application Inference Profile](./bedrock_application_inference_profile.md)
 # C
 - [CloudFront Distribution](./cloudfront_distribution.md)
+- [CloudFront Function](./cloudfront_function.md)
 - [Cloudwatch Loggroup](./cloudwatch_loggroup.md)
 - [Cloudwatch Metric Alarm](./cloudwatch_metricalarm.md)
 - [Cloudwatch Subscription Filter](./cloudwatch_subscription_filter.md)

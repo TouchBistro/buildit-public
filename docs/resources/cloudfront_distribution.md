@@ -94,7 +94,7 @@ Only the default cache behavior is managed. Ordered (path-pattern) cache behavio
 2. an **AWS-managed policy name** as documented for [cache](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-cache-policies.html), [origin request](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-origin-request-policies.html), and [response headers](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-response-headers-policies.html) policies — e.g. `CachingOptimized`, `AllViewer`, `SecurityHeadersPolicy`. Names are case-insensitive and the `Managed-` prefix is optional; they resolve to the well-known ids at plan time with no AWS call;
 3. anything else is treated as a **custom policy name** and resolved via the CloudFront API at compare/apply time (case-insensitive; must match exactly one policy).
 
-**`functionAssociations[]`**: `eventType` (`viewer-request` \| `viewer-response`), `functionARN` (the CloudFront Function **ARN or its Name**, resolved to the ARN via the CloudFront API — same identifier pattern as `certificate` / origin `target`). The function must already exist; this resource does not create CloudFront Functions.
+**`functionAssociations[]`**: `eventType` (`viewer-request` \| `viewer-response`), `functionARN` (the CloudFront Function **ARN or its Name**, resolved to the ARN via the CloudFront API — same identifier pattern as `certificate` / origin `target`). The function must exist by the time the distribution is applied; declare it with the [`cloudfront-function`](./cloudfront_function.md) resource and add it to `dependsOn`, or reference a pre-existing function.
 
 ### `customErrorResponses[]`
 
@@ -161,4 +161,4 @@ resources:
 - **Ordered cache behaviors & origin groups are not managed.** Only `defaultCacheBehavior` is configurable; any ordered behaviors or origin groups already on the distribution are preserved untouched on update.
 - **Lookup cost:** matching an existing distribution lists all distributions in the account and reads each one's config to compare `CallerReference` (CloudFront's `DistributionSummary` does not expose it, and buildit persists no state). In accounts with many distributions this is rate-limited; a per-run cache may be added later.
 - **No output references:** the created distribution's ARN/domain name are not surfaced for other resources in the same run. Route53 alias records to a CloudFront distribution take the distribution's domain name directly.
-- **CloudFront Functions** are not managed by this resource; reference existing function ARNs via `functionAssociations`.
+- **CloudFront Functions** are not managed by this resource; declare them with the [`cloudfront-function`](./cloudfront_function.md) resource (or reference existing function ARNs) via `functionAssociations`.

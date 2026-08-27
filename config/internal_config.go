@@ -201,6 +201,25 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 			graph.AddVertex(r, r.DependsOn)
 		}
 
+		for n, r := range c.Resources.CloudfrontFunction {
+			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
+			if err != nil {
+				return err
+			}
+
+			r.Name = *eId
+			r.Context.ProviderName = *ePr
+			addErr(checkReservedTags("cloudfront-function", n, r.Tags))
+			r.GlobalTags = i.tagsFor(*eId)
+			r.Normalize(ctx)
+			addErr(checkBuilditTagsApplied("cloudfront-function", n, r.Tags))
+			if err := r.Validate(ctx); err != nil {
+				validationErrs = append(validationErrs, err)
+				continue
+			}
+			graph.AddVertex(r, r.DependsOn)
+		}
+
 		for n, r := range c.Resources.CWLogGroup {
 			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
 			if err != nil {

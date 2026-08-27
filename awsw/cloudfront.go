@@ -546,6 +546,219 @@ func (c Cloudfront) DeleteVpcOriginTags(ctx context.Context, arn string, keys []
 	return nil
 }
 
+// ExistingFunction holds an existing CloudFront function's identifying info, current
+// configuration, code (all read from the DEVELOPMENT stage), and tags, used for
+// comparison and updates.
+type ExistingFunction struct {
+	ARN    string
+	ETag   string
+	Status string
+	Config cftypes.FunctionConfig
+	Code   []byte
+	Tags   map[string]string
+}
+
+// FindFunctionByName returns the function with the given name, reading its config and
+// code from the DEVELOPMENT stage (the stage UpdateFunction writes to). Returns
+// (nil, nil) when the function does not exist.
+func (c Cloudfront) FindFunctionByName(ctx context.Context, name string) (*ExistingFunction, error) {
+	desc, err := c.DescribeFunction(ctx, &cloudfront.DescribeFunctionInput{
+		Name:  aws.String(name),
+		Stage: cftypes.FunctionStageDevelopment,
+	})
+	if err != nil {
+		var nsfe *cftypes.NoSuchFunctionExists
+		if errors.As(err, &nsfe) {
+			return nil, nil
+		}
+		return nil, errors.Wrapf(err, "error describing cloudfront function %q", name)
+	}
+
+	if desc.FunctionSummary == nil || desc.FunctionSummary.FunctionMetadata == nil || desc.FunctionSummary.FunctionConfig == nil {
+		return nil, errors.Errorf("cloudfront function %q has an incomplete response", name)
+	}
+
+	code, err := c.GetFunction(ctx, &cloudfront.GetFunctionInput{
+		Name:  aws.String(name),
+		Stage: cftypes.FunctionStageDevelopment,
+	})
+	if err != nil {
+		return nil, errors.Wrapf(err, "error getting cloudfront function code %q", name)
+	}
+
+	arn := aws.ToString(desc.FunctionSummary.FunctionMetadata.FunctionARN)
+
+	tags, err := c.FunctionTags(ctx, arn)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ExistingFunction{
+		ARN:    arn,
+		ETag:   aws.ToString(desc.ETag),
+		Status: aws.ToString(desc.FunctionSummary.Status),
+		Config: *desc.FunctionSummary.FunctionConfig,
+		Code:   code.FunctionCode,
+		Tags:   tags,
+	}, nil
+}
+
+// FunctionTags returns the tags for the function identified by arn.
+func (c Cloudfront) FunctionTags(ctx context.Context, arn string) (map[string]string, error) {
+	out, err := c.ListTagsForResource(ctx, &cloudfront.ListTagsForResourceInput{
+		Resource: aws.String(arn),
+	})
+	if err != nil {
+		return nil, errors.Wrapf(err, "error listing tags for cloudfront function %v", arn)
+	}
+
+	tags := make(map[string]string)
+	if out.Tags != nil {
+		for _, t := range out.Tags.Items {
+			tags[aws.ToString(t.Key)] = aws.ToString(t.Value)
+		}
+	}
+	return tags, nil
+}
+
+// AddFunctionTags adds/updates the supplied tags on the function.
+func (c Cloudfront) AddFunctionTags(ctx context.Context, arn string, tags map[string]string) error {
+	if len(tags) == 0 {
+		return nil
+	}
+	_, err := c.TagResource(ctx, &cloudfront.TagResourceInput{
+		Resource: aws.String(arn),
+		Tags:     toTags(tags),
+	})
+	if err != nil {
+		return errors.Wrapf(err, "error tagging cloudfront function %v", arn)
+	}
+	return nil
+}
+
+// DeleteFunctionTags removes the supplied tag keys from the function.
+func (c Cloudfront) DeleteFunctionTags(ctx context.Context, arn string, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	_, err := c.UntagResource(ctx, &cloudfront.UntagResourceInput{
+		Resource: aws.String(arn),
+		TagKeys:  &cftypes.TagKeys{Items: keys},
+	})
+	if err != nil {
+		return errors.Wrapf(err, "error untagging cloudfront function %v", arn)
+	}
+	return nil
+}
+
+// LiveFunctionCode returns the function's code at the LIVE (published) stage, or
+// (nil, nil) if the function has never been published.
+func (c Cloudfront) LiveFunctionCode(ctx context.Context, name string) ([]byte, error) {
+	out, err := c.GetFunction(ctx, &cloudfront.GetFunctionInput{
+		Name:  aws.String(name),
+		Stage: cftypes.FunctionStageLive,
+	})
+	if err != nil {
+		var nsfe *cftypes.NoSuchFunctionExists
+		if errors.As(err, &nsfe) {
+			return nil, nil
+		}
+		return nil, errors.Wrapf(err, "error getting live cloudfront function code %q", name)
+	}
+	return out.FunctionCode, nil
+}
+
+// CreateFunction creates a new function in the DEVELOPMENT stage and returns its ETag,
+// which the caller needs to publish it. Tags are applied atomically at creation.
+func (c Cloudfront) CreateFunction(ctx context.Context, name string, config *cftypes.FunctionConfig, code []byte, tags map[string]string) (string, error) {
+	input := &cloudfront.CreateFunctionInput{
+		Name:           aws.String(name),
+		FunctionConfig: config,
+		FunctionCode:   code,
+	}
+	if len(tags) > 0 {
+		input.Tags = toTags(tags)
+	}
+	out, err := c.Client.CreateFunction(ctx, input)
+	if err != nil {
+		return "", errors.Wrapf(err, "error creating cloudfront function %q", name)
+	}
+	return aws.ToString(out.ETag), nil
+}
+
+// UpdateFunctionCode updates the function's config and code in the DEVELOPMENT stage
+// using optimistic concurrency via the supplied ETag (IfMatch). Returns the new ETag.
+func (c Cloudfront) UpdateFunctionCode(ctx context.Context, name, etag string, config *cftypes.FunctionConfig, code []byte) (string, error) {
+	out, err := c.UpdateFunction(ctx, &cloudfront.UpdateFunctionInput{
+		Name:           aws.String(name),
+		IfMatch:        aws.String(etag),
+		FunctionConfig: config,
+		FunctionCode:   code,
+	})
+	if err != nil {
+		return "", errors.Wrapf(err, "error updating cloudfront function %q", name)
+	}
+	return aws.ToString(out.ETag), nil
+}
+
+// PublishFunctionVersion publishes the function's DEVELOPMENT stage to LIVE. The etag
+// must be the current DEVELOPMENT-stage ETag (from create, update, or describe).
+func (c Cloudfront) PublishFunctionVersion(ctx context.Context, name, etag string) error {
+	_, err := c.PublishFunction(ctx, &cloudfront.PublishFunctionInput{
+		Name:    aws.String(name),
+		IfMatch: aws.String(etag),
+	})
+	if err != nil {
+		return errors.Wrapf(err, "error publishing cloudfront function %q", name)
+	}
+	return nil
+}
+
+// DeleteFunctionByETag deletes the function. Fails if the function is still associated
+// with a distribution.
+func (c Cloudfront) DeleteFunctionByETag(ctx context.Context, name, etag string) error {
+	_, err := c.DeleteFunction(ctx, &cloudfront.DeleteFunctionInput{
+		Name:    aws.String(name),
+		IfMatch: aws.String(etag),
+	})
+	if err != nil {
+		return errors.Wrapf(err, "error deleting cloudfront function %q (functions still associated with a distribution cannot be deleted)", name)
+	}
+	return nil
+}
+
+// WaitForFunctionDeployed polls the function's status until it leaves IN_PROGRESS
+// (function deploys settle in seconds, unlike distributions), or until the timeout
+// elapses. There is no SDK waiter for functions.
+func (c Cloudfront) WaitForFunctionDeployed(ctx context.Context, name string) error {
+	deadline := time.After(5 * time.Minute)
+	for {
+		out, err := c.DescribeFunction(ctx, &cloudfront.DescribeFunctionInput{
+			Name:  aws.String(name),
+			Stage: cftypes.FunctionStageDevelopment,
+		})
+		if err != nil {
+			return errors.Wrapf(err, "error describing cloudfront function %q while waiting for deploy", name)
+		}
+		if out.FunctionSummary == nil {
+			return errors.Errorf("cloudfront function %q returned no summary while waiting for deploy", name)
+		}
+
+		status := strings.ToUpper(aws.ToString(out.FunctionSummary.Status))
+		if status != "IN_PROGRESS" {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return errors.Wrapf(ctx.Err(), "context cancelled waiting for cloudfront function %q to deploy", name)
+		case <-deadline:
+			return errors.Errorf("timed out waiting for cloudfront function %q to deploy", name)
+		case <-time.After(5 * time.Second):
+		}
+	}
+}
+
 // WaitForVpcOriginDeployed polls until the VPC origin's status is "Deployed", or until
 // the timeout elapses. The SDK provides no waiter for VPC origins, so this polls
 // GetVpcOrigin directly. Deploys typically complete within ~15 minutes; the timeout is

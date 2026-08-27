@@ -47,6 +47,17 @@ Resources often need to resolve an ARN from a user-supplied identifier (ARN, ID,
 
 ## Guidelines
 
+- **Nil-check SDK response pointers before dereferencing.** AWS SDK v2 output structs expose
+  nested data as pointers (`out.FunctionSummary.FunctionMetadata`, `out.VpcOrigin.Status`, …) and
+  a partial/malformed response makes any unguarded chain panic mid-apply with a stack trace
+  instead of a wrapped error. Guard every level you dereference and return a descriptive error:
+  ```go
+  if out.FunctionSummary == nil || out.FunctionSummary.FunctionMetadata == nil {
+      return errors.Errorf("cloudfront function %q has an incomplete response", name)
+  }
+  ```
+  `aws.ToString`/`aws.ToBool` are nil-safe for leaf fields, but they do not protect the struct
+  pointers on the way to the leaf.
 - **No Resource Logic**: These wrappers should be purely for interacting with AWS. Business logic belongs in the `resource` package.
 - **Context Propagation**: Always pass `context.Context` as the first parameter to SDK calls and helper methods.
 - **Error Wrapping**: Always use `github.com/pkg/errors` — not `fmt.Errorf` — for wrapping errors. Use `errors.Wrapf(err, "...")` to add context and `errors.Errorf("...")` for new errors. Do **not** use `fmt.Errorf` with `%w`.

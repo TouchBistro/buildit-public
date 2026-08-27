@@ -12,6 +12,7 @@ type resourcesConfig struct {
 	BedrockApplicationInferenceProfile map[string]resource.BedrockApplicationInferenceProfile `yaml:"bedrock-application-inference-profile"`
 	Certificate                        map[string]resource.ACMCertificate                     `yaml:"certificate"`
 	CloudfrontDistribution             map[string]resource.CloudfrontDistribution             `yaml:"cloudfront-distribution"`
+	CloudfrontFunction                 map[string]resource.CloudfrontFunction                 `yaml:"cloudfront-function"`
 	CloudfrontVpcOrigin                map[string]resource.CloudfrontVpcOrigin                `yaml:"cloudfront-vpc-origin"`
 	CWLogGroup                         map[string]resource.CWLogGroup                         `yaml:"cloudwatch-loggroup"`
 	CWMetricAlarm                      map[string]resource.CWMetricAlarm                      `yaml:"cloudwatch-metricalarm"`

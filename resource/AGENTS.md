@@ -152,6 +152,7 @@ type MyResource struct {
 | **Bedrock**          | `ApplicationInferenceProfileByName`                                              | Name                                 |
 | **CloudFront**       | `VpcOriginByIdentifier`, `VpcOriginIdForIdentifier`, `FunctionArnForIdentifier` | ID, Name / ARN, Name                 |
 | **CloudFront**       | `FindVpcOriginByName` — lifecycle lookup: returns `(nil, nil)` when absent       | Name                                 |
+| **CloudFront**       | `FindFunctionByName` — lifecycle lookup: returns `(nil, nil)` when absent        | Name                                 |
 | **CloudFront**       | `CachePolicyIdForIdentifier`, `OriginRequestPolicyIdForIdentifier`, `ResponseHeadersPolicyIdForIdentifier` | ID (UUID), Name                      |
 | **CloudWatch**       | `AlarmArnForIdentifier`, `LogGroupArnForIdentifier`                              | ARN, Name                            |
 | **DynamoDB**         | `TableArnForIdentifier`                                                          | ARN, Name                            |
