@@ -117,6 +117,28 @@ Rules:
   resource's own tags, so nothing in `resource/` should be writing one; the values arrive through
   `GlobalTags`, which `config` populates.
 
+### Untaggable Resource Types
+
+Some resource types cannot be tagged because AWS's tagging API does not cover them —
+currently `lambda-layer`, `eventbridge-connection`, `eventbridge-apidestination`,
+`cloudwatch-subscriptionfilter`, `route53-record`, and `sns-subscription`. The convention
+for these (DEVOPS-8900):
+
+- The struct still declares `Tags map[string]string` with yaml key `tags` — solely so a
+  config that sets it fails loudly. Never leave a tags field that silently does nothing,
+  and never delete the field: yaml parsing is non-strict, so a removed field turns a
+  user's `tags:` into a silently ignored unknown key, which is the failure mode this
+  convention exists to prevent.
+- `Validate` rejects a non-empty `Tags` with `UnsupportedTagsMessage(<resource type>)`.
+- The type's Generate block in `config` calls `checkUnsupportedTags` BEFORE `Normalize`
+  and skips the resource on error — several Normalize implementations reach AWS (the
+  eventbridge-connection secret fetch panics on a missing secret), and the config
+  mistake must be reported ahead of any downstream lookup failure.
+- No `GlobalTags` field and no `tagsFor` wiring: global tags cannot reach these types,
+  so pretending otherwise would be another silent no-op.
+- The docs entry for the type states tags are unsupported and that setting the field
+  fails validation.
+
 ## Pattern: Name-to-ARN Resolution
 
 AWS SDK requires **ARNs**, but `buildit` YAML often uses **Names** or **IDs**. Use the `awsw` package standardized tiered lookup pattern.

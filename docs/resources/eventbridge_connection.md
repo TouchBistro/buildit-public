@@ -9,7 +9,7 @@ Creates a connection. A connection defines the authorization type and credential
 |`name`|The name for the connection to create|`string`|Yes| |
 |`description`|A description for the connection to create|`string`|No| |
 |`connectionParameters`|The connection parameters. See [EventBridgeConnectionParameters](#eventbridgeconnectionparameters)|`EventBridgeConnectionParameters`|Yes| |
-|`tags`|**Not applied.** The AWS `CreateConnection` API takes no tags, so nothing set here — and no `globalTags`, including `buildit:resource-id` — reaches the connection|`map[string]string`|No|`{}`|
+|`tags`|**Not supported — setting this field fails validation.** AWS does not support tags on EventBridge connections (the `TagResource` API covers rules and event buses only), so no tags — `globalTags` and `buildit:resource-id` included — can reach a connection. Remove this field from configs that set it|`map[string]string`|No|`{}`|
 |`dependsOn`|The `buildit` resources that this resource depends on in the context of the current execution. All resources that are listed in this section will be built before this; while destoryed after this|`[]string`|No|`[]`|
 
 ## EventBridgeConnectionParameters

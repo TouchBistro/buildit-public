@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/TouchBistro/awesome/providers"
@@ -84,30 +85,57 @@ func (e ELB) TargetGroupArnForIdentifier(ctx context.Context, identifier string)
 	return out.TargetGroups[0].TargetGroupArn, nil
 }
 
+// describeTagsPageSize is the maximum number of resource ARNs a single ELBv2
+// DescribeTags call accepts.
+const describeTagsPageSize = 20
+
 // GetResourceTags returns the resource tags for the supplied ELBv2 resource by arn, else
 // error
 func (e ELB) GetResourceTags(ctx context.Context, arn string) (map[string]string, error) {
 
-	out, err := e.DescribeTags(ctx, &elbv2.DescribeTagsInput{
-		ResourceArns: []string{arn},
-	})
-
+	tagsByArn, err := e.GetResourceTagsBatch(ctx, []string{arn})
 	if err != nil {
 		return nil, err
 	}
 
-	if len(out.TagDescriptions) == 0 {
+	t, ok := tagsByArn[arn]
+	if !ok {
 		return nil, errors.Errorf("tags not found for resource arn %v", arn)
 	}
 
-	t := make(map[string]string)
-	for _, tag := range out.TagDescriptions[0].Tags {
-		if tag.Key != nil && tag.Value != nil {
-			t[*tag.Key] = *tag.Value
+	return t, nil
+}
+
+// GetResourceTagsBatch returns the resource tags for the supplied ELBv2 resource arns,
+// keyed by arn. DescribeTags accepts up to 20 arns per call, so the arns are fetched in
+// pages of that size — one call per page instead of one per resource.
+func (e ELB) GetResourceTagsBatch(ctx context.Context, arns []string) (map[string]map[string]string, error) {
+
+	tagsByArn := make(map[string]map[string]string, len(arns))
+
+	for page := range slices.Chunk(arns, describeTagsPageSize) {
+		out, err := e.DescribeTags(ctx, &elbv2.DescribeTagsInput{
+			ResourceArns: page,
+		})
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to describe tags for %v resource arn(s)", len(page))
+		}
+
+		for _, desc := range out.TagDescriptions {
+			if desc.ResourceArn == nil {
+				continue
+			}
+			t := make(map[string]string)
+			for _, tag := range desc.Tags {
+				if tag.Key != nil && tag.Value != nil {
+					t[*tag.Key] = *tag.Value
+				}
+			}
+			tagsByArn[*desc.ResourceArn] = t
 		}
 	}
 
-	return t, nil
+	return tagsByArn, nil
 }
 
 // AddResourceTags tags the ELBv2 resource with the supplied tag keys/value, returns error if the

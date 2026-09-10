@@ -25,7 +25,8 @@ type SNSSubscription struct {
 	EndpointName string `yaml:"endpointName"`
 	TopicArn     *string
 	EndpointArn  *string
-	DependsOn    []Key `yaml:"dependsOn"`
+	Tags         map[string]string `yaml:"tags"` // rejected by Validate: subscriptions cannot be tagged
+	DependsOn    []Key             `yaml:"dependsOn"`
 }
 
 // Key returns the unique key for the resource for this buildit context
@@ -70,6 +71,10 @@ func (s *SNSSubscription) Normalize(ctx context.Context) {
 func (s SNSSubscription) Validate(ctx context.Context) error {
 
 	var errMessages []string
+
+	if len(s.Tags) > 0 {
+		errMessages = append(errMessages, UnsupportedTagsMessage("sns-subscription"))
+	}
 
 	// topic name not found
 	if len(s.TopicName) == 0 {

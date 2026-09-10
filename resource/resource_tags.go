@@ -60,6 +60,16 @@ func InheritedTags(tags map[string]string) map[string]string {
 	return inherited
 }
 
+// UnsupportedTagsMessage is the standard validation message for a resource type whose AWS
+// API has no tagging support (a lambda layer, an eventbridge connection, ...). Convention:
+// such a type still declares a `tags` yaml field — solely so a config that sets it fails
+// loudly with this message instead of having the value silently ignored. Both the type's
+// Validate and config load's pre-Normalize check use it, so the two paths reject
+// identically. See "Tag Comparison and Diff Pattern" in resource/AGENTS.md.
+func UnsupportedTagsMessage(resourceType string) string {
+	return fmt.Sprintf("tags are not supported: AWS does not support tags on %v resources, remove the tags field", resourceType)
+}
+
 // TagDiffSummary returns detailed user-facing tag diff messages.
 func TagDiffSummary(current map[string]string, diff util.TagDiffResult) []string {
 	messages := make([]string, 0, len(diff.Changed)+len(diff.Deleted)+len(diff.Added))

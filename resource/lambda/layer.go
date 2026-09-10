@@ -21,11 +21,11 @@ import (
 
 // Layer represents a lambda layer, version
 //
-// TODO: the Tags field below is dead, and so no tag reaches a layer — buildit:resource-id
-// included. PublishLayerVersion takes no tags, Normalize never merges GlobalTags in, and
-// nothing sends them to AWS. Its yaml key is "_" rather than "tags", so a config cannot set
-// it either. Making it real needs a TagResource call plus a compare/diff path; until then
-// leave the key as-is rather than exposing a field that silently does nothing.
+// Layers carry no tags: AWS does not support tagging Lambda layers (TagResource covers
+// functions, event source mappings, and code signing configurations only), so neither
+// resource tags nor globalTags — buildit:resource-id included — can reach a layer. Per
+// the unsupported-tags convention, the Tags field exists only so a config that sets it
+// fails loudly at load instead of being ignored.
 type Layer struct {
 	resource.BaseResource `yaml:",inline"`
 	LayerRef
@@ -35,8 +35,7 @@ type Layer struct {
 	License       *string           `yaml:"license,omitempty"`                 // the license agreement
 	Code          Code              `yaml:"code"`                              // only supports S3 location to upload code
 	Publish       bool              `yaml:"publish"`                           // only publish a new version of the layer when this is set to `true`;
-	Tags          map[string]string `yaml:"_"`
-	GlobalTags    map[string]string `yaml:"-"`
+	Tags          map[string]string `yaml:"tags"`                              // rejected by Validate: layers cannot be tagged
 	DependsOn     []resource.Key    `yaml:"-"`
 }
 
@@ -66,6 +65,10 @@ func (r *Layer) Normalize(ctx context.Context) {
 func (r Layer) Validate(ctx context.Context) error {
 
 	var errorMsgs []string
+
+	if len(r.Tags) > 0 {
+		errorMsgs = append(errorMsgs, resource.UnsupportedTagsMessage("lambda-layer"))
+	}
 
 	if r.Identifier() == "" {
 		errorMsgs = append(errorMsgs, "lambda layer name cannot be empty")

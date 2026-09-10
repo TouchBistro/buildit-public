@@ -131,6 +131,7 @@ type LoadBalancerListenerDiff struct {
 	rulesToUpdate      []*LBRule          // new rule n, nil implies no updated needed
 	rulesToAdd         []LBRule
 	rulesToDelete      []LBRule
+	ruleTagDiffs       map[string]util.TagDiffResult // tag changes for surviving rules, keyed by rule ARN
 	tagsDiff           bool
 	tagDiff            util.TagDiffResult
 }
@@ -329,6 +330,35 @@ func (l LBListener) equals(ctx context.Context, rctx Context, existing *elbv2typ
 		diffs.Messages = append(diffs.Messages, fmt.Sprintf("%v rules to be deleted from listener %v", len(diffs.rulesToDelete), l.Name))
 	}
 
+	// rule tags — CreateRule tags a rule at creation only and ModifyRule takes no tags, so
+	// ordinary tag changes (globalTags edits included) must reconcile here for every rule
+	// that survives this apply. Rules deliberately carry only the listener's inherited
+	// global tags, never a buildit:resource-id of their own.
+	var ruleArns []string
+	for i := 0; i < limit; i++ {
+		if existingRules[i].RuleArn == nil {
+			return nil, errors.Errorf("load balancer rule for listener %v has an incomplete response, missing rule arn", l.Identifier())
+		}
+		ruleArns = append(ruleArns, *existingRules[i].RuleArn)
+	}
+	ruleTagsByArn, err := awsw.NewELB(ctx, rctx.ProviderName).GetResourceTagsBatch(ctx, ruleArns)
+	if err != nil {
+		return nil, errors.Wrapf(err, "error fetching tags for load balancer rules of listener %v", l.Identifier())
+	}
+	for i := 0; i < limit; i++ {
+		ruleArn := *existingRules[i].RuleArn
+		if tagDiff := TagDiffForContext(ctx, ruleTagsByArn[ruleArn], l.GlobalTags); tagDiff.HasChanges() {
+			diff = true
+			if diffs.ruleTagDiffs == nil {
+				diffs.ruleTagDiffs = make(map[string]util.TagDiffResult)
+			}
+			diffs.ruleTagDiffs[ruleArn] = tagDiff
+			diffs.Messages = append(diffs.Messages,
+				fmt.Sprintf("tags for load balancer rule with priority %v are not the same", util.Coalesce(existingRules[i].Priority, "?")))
+			diffs.Messages = append(diffs.Messages, TagDiffSummary(ruleTagsByArn[ruleArn], tagDiff)...)
+		}
+	}
+
 	// tags
 	awsTags, err := awsw.NewELB(ctx, rctx.ProviderName).GetResourceTags(ctx, *existing.ListenerArn)
 	if err != nil {
@@ -485,6 +515,20 @@ func (l LBListener) applyDiffs(ctx context.Context, rctx Context, diffs Resource
 			err := drule.Destroy(ctx, rctx)
 			if err != nil {
 				return errors.Wrap(err, "error creating load balancer rules")
+			}
+		}
+	}
+
+	// rule tags — reconciled per rule since ModifyRule takes no tags
+	for ruleArn, tagDiff := range listDiffs.ruleTagDiffs {
+		if upserts := tagDiff.Upserts(); len(upserts) > 0 {
+			if err := awsw.NewELB(ctx, rctx.ProviderName).AddResourceTags(ctx, ruleArn, upserts); err != nil {
+				return errors.Wrapf(err, "error updating load balancer rule tags for listener %v", l.Identifier())
+			}
+		}
+		if len(tagDiff.Deleted) > 0 {
+			if err := awsw.NewELB(ctx, rctx.ProviderName).DeleteResourceTags(ctx, ruleArn, tagDiff.Deleted); err != nil {
+				return errors.Wrapf(err, "error deleting load balancer rule tags for listener %v", l.Identifier())
 			}
 		}
 	}

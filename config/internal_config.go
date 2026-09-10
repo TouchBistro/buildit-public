@@ -265,6 +265,10 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 			}
 			r.Name = *eId
 			r.Context.ProviderName = *ePr
+			if err := checkUnsupportedTags("cloudwatch-subscriptionfilter", n, r.Tags); err != nil {
+				validationErrs = append(validationErrs, err)
+				continue
+			}
 			r.Normalize(ctx)
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -341,6 +345,10 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 
 			r.Name = *eId
 			r.Context.ProviderName = *ePr
+			if err := checkUnsupportedTags("eventbridge-apidestination", n, r.Tags); err != nil {
+				validationErrs = append(validationErrs, err)
+				continue
+			}
 			r.Normalize(ctx)
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -379,10 +387,13 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 
 			r.Name = *eId
 			r.Context.ProviderName = *ePr
-			// The reserved namespace is policed here even though this type's tags go
-			// nowhere: CreateConnection takes none, so there is no tagsFor wiring and no
-			// applied-check either. See DEVOPS-8900.
-			addErr(checkReservedTags("eventbridge-connection", n, r.Tags))
+			// No tagsFor wiring or applied-check: AWS does not support tagging
+			// EventBridge connections. Checked before Normalize, which panics on a
+			// missing secret — the tags rejection must win over that.
+			if err := checkUnsupportedTags("eventbridge-connection", n, r.Tags); err != nil {
+				validationErrs = append(validationErrs, err)
+				continue
+			}
 			r.Normalize(ctx)
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -479,8 +490,12 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 
 			r.Name = *eId
 			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("lambda-layer", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
+			// no tagsFor wiring: AWS does not support tagging lambda layers, see the
+			// lambda.Layer struct comment (DEVOPS-8900)
+			if err := checkUnsupportedTags("lambda-layer", n, r.Tags); err != nil {
+				validationErrs = append(validationErrs, err)
+				continue
+			}
 			r.Normalize(ctx)
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -607,6 +622,11 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				}
 			}
 
+			if err := checkUnsupportedTags("route53-record", n, r.Tags); err != nil {
+				validationErrs = append(validationErrs, err)
+				continue
+			}
+
 			r.Name = *eId
 			r.Context.ProviderName = *ePr
 			r.Normalize(ctx)
@@ -711,6 +731,10 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 
 			r.Name = *eId
 			r.Context.ProviderName = *ePr
+			if err := checkUnsupportedTags("sns-subscription", n, r.Tags); err != nil {
+				validationErrs = append(validationErrs, err)
+				continue
+			}
 			r.Normalize(ctx)
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)

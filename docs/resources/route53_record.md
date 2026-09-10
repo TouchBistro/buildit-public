@@ -17,6 +17,7 @@ Route53 Alias record-sets for **Load Balancer** or **Cloudfront distribution** t
 |`aliasType`| Alias type specifies if this record is an alias. Allowed values are `load-balancer` or `cloudfront-distribution`. For `load-balancer` alias, the `destination` must contain only a single destination with the value in the format `provider/load-balancer-name`. For `cloudfront-distribution` the destination must include the Cloudfront distribution's domain name. |`string`|No|`<nil>`|
 |`routingPolicy`| An optional routing policy for this record. For more detail see [Routing Policy](#routing-policy-routingpolicy)|`routingPolicy{}`|No|`<nil>`|
 |`destinations`| A list of values for this DNS record. Multiple values can be supplied for most record types. For `alias` records, only a single value is allowed.  |`[]string`|Yes||
+|`tags`|**Not supported — setting this field fails validation.** AWS does not support tags on Route53 record sets (the `ChangeTagsForResource` API covers hosted zones and health checks only), so no tags — `globalTags` included — can reach a record|`map[string]string`|No|`{}`|
 |`dependsOn`|The `buildit` resources that this resource depends on in the context of the current execution. All resources that are listed in this section will be built before this; while destoryed after this|`[]string`|No|`[]`|
 
 

@@ -13,6 +13,7 @@ Check out AWS documentation for sns subscription [here](https://awscli.amazonaws
 |`protocol`|The protocol for the sns subscription. Currently only `lambda` is supported|`string`|No|`lambda`|
 |`topicName`|The name of the topic to subscribe to|`string`|Yes||
 |`endpointName`|The endpoint to be subscribed to the topic|`string`|Yes||
+|`tags`|**Not supported — setting this field fails validation.** AWS does not support tags on SNS subscriptions (the `TagResource` API covers topics only), so no tags — `globalTags` included — can reach a subscription|`map[string]string`|No|`{}`|
 |`dependsOn`|The `buildit` resources that this resource depends on in the context of the current execution. All resources that are listed in this section will be built before this; while destoryed after this|`[]string`|No|`[]`|
 
 Example:

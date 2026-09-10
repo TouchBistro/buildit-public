@@ -96,6 +96,22 @@ func TestCheckBuilditTagsApplied(t *testing.T) {
 	})
 }
 
+func TestCheckUnsupportedTags(t *testing.T) {
+	t.Run("no tags passes", func(t *testing.T) {
+		assert.NoError(t, checkUnsupportedTags("eventbridge-connection", "example-conn", nil))
+		assert.NoError(t, checkUnsupportedTags("eventbridge-connection", "example-conn", map[string]string{}))
+	})
+
+	t.Run("any tags are rejected with the standard message", func(t *testing.T) {
+		err := checkUnsupportedTags("lambda-layer", "example-layer", map[string]string{"team": "example-team"})
+		require.Error(t, err)
+
+		vErr, ok := err.(*resource.ValidationError)
+		require.True(t, ok, "expected a ValidationError, got %T", err)
+		assert.Contains(t, vErr.Messages, resource.UnsupportedTagsMessage("lambda-layer"))
+	})
+}
+
 func TestCheckReservedGlobalTags(t *testing.T) {
 	t.Run("rejects a reserved key and names the source file", func(t *testing.T) {
 		cfg := parseConfig(t, `

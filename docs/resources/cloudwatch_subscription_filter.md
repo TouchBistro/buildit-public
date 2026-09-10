@@ -13,6 +13,7 @@ Check out AWS documentation for cloudwatch subscription filter [here](https://aw
 |`destination`|Destination to deliver matching log events to. Must be a valid lambda function|`string`|Yes||
 |`filterPattern`|A filter pattern for subscribing to a filtered stream of log events. Supported format can be found [here](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/FilterAndPatternSyntax.html)|`string`|No|`""`|
 |`logGroup`|The name of the log group to ingest logs from|`string`|Yes||
+|`tags`|**Not supported — setting this field fails validation.** AWS does not support tags on CloudWatch Logs subscription filters, so no tags — `globalTags` included — can reach a subscription filter|`map[string]string`|No|`{}`|
 |`dependsOn`|The `buildit` resources that this resource depends on in the context of the current execution. All resources that are listed in this section will be built before this; while destoryed after this|`[]string`|No|`[]`|
 
 Example: subscription filter with filter patterns to match terms in JSON log events

@@ -24,7 +24,8 @@ type CWSubscriptionFilter struct {
 	FilterPattern  string  `yaml:"filterPattern"`
 	LogGroup       string  `yaml:"logGroup"`
 	DestinationArn *string
-	DependsOn      []Key `yaml:"dependsOn"`
+	Tags           map[string]string `yaml:"tags"` // rejected by Validate: subscription filters cannot be tagged
+	DependsOn      []Key             `yaml:"dependsOn"`
 }
 
 // Key returns the unique key for the resource for this buildit context
@@ -54,6 +55,10 @@ func (c *CWSubscriptionFilter) Normalize(ctx context.Context) {
 func (c CWSubscriptionFilter) Validate(ctx context.Context) error {
 
 	var errMessages []string
+
+	if len(c.Tags) > 0 {
+		errMessages = append(errMessages, UnsupportedTagsMessage("cloudwatch-subscriptionfilter"))
+	}
 
 	if len(c.Destination) == 0 {
 		errMessages = append(errMessages, "destination must be supplied")

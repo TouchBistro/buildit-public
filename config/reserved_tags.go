@@ -33,6 +33,23 @@ func checkReservedTags(resourceType, name string, tags map[string]string) error 
 	}
 }
 
+// checkUnsupportedTags rejects a config that sets tags on a resource type whose AWS API
+// has no tagging support. It must run BEFORE Normalize and skip the resource on error:
+// several Normalize implementations reach AWS (the eventbridge-connection secret fetch
+// panics on a missing secret), and this rejection has to win over those failures so the
+// user sees the config mistake, not a downstream lookup error.
+func checkUnsupportedTags(resourceType, name string, tags map[string]string) error {
+	if len(tags) == 0 {
+		return nil
+	}
+
+	return &resource.ValidationError{
+		ResourceIdentifier: name,
+		ResourceType:       resourceType,
+		Messages:           []string{resource.UnsupportedTagsMessage(resourceType)},
+	}
+}
+
 // checkBuilditTagsApplied verifies buildit's own tags actually reached a resource once it
 // has been normalized. A resource type whose Generate block was never wired to tagsFor
 // would otherwise ship silently untagged — which is how eventbridge-connection's tags came

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/TouchBistro/buildit/awsw"
 	"github.com/TouchBistro/buildit/client"
 	"github.com/TouchBistro/buildit/util"
 	"github.com/TouchBistro/goutils/color"
@@ -218,10 +219,16 @@ func (c CWMetricAlarm) Destroy(ctx context.Context) error {
 }
 
 // CWMetricAlarmDiff represents diffs for the CWMetric alarm.
-// since MetricAlarms are always upserts, all we need to capture
-// if there is any diff found, so we don't need an additional fields
+// MetricAlarm definition changes are always upserts via PutMetricAlarm, but tags need
+// their own apply path: AWS ignores PutMetricAlarm's Tags field on an existing alarm,
+// so tag changes go through TagResource/UntagResource against the alarm ARN.
 type CWMetricAlarmDiff struct {
 	BaseResourceDiff
+
+	alarmArn       string
+	definitionDiff bool // any non-tag difference; drives the PutMetricAlarm upsert
+	tagsDiff       bool
+	tagDiff        util.TagDiffResult
 }
 
 // Compare fetches the existing object from AWS & compares it with this definition,
@@ -350,6 +357,24 @@ func (c CWMetricAlarm) Compare(ctx context.Context) (ResourceDiff, error) {
 		diffs.Messages = append(diffs.Messages, "alarm unit value is not the same")
 	}
 
+	diffs.definitionDiff = found
+
+	// tags
+	if existing.AlarmArn == nil {
+		return nil, errors.Errorf("cloudwatch metric alarm %v has an incomplete response, missing alarm arn", c.Identifier())
+	}
+	diffs.alarmArn = *existing.AlarmArn
+	awsTags, err := awsw.NewCloudWatch(ctx, c.Context.ProviderName).GetResourceTags(ctx, diffs.alarmArn)
+	if err != nil {
+		return nil, errors.Wrapf(err, "error fetching tags for cloudwatch metric alarm %v", c.Identifier())
+	}
+	if tagDiff := TagDiffForContext(ctx, awsTags, c.Tags); tagDiff.HasChanges() {
+		found = true
+		diffs.tagsDiff = true
+		diffs.tagDiff = tagDiff
+		diffs.Messages = append(diffs.Messages, TagDiffSummary(awsTags, diffs.tagDiff)...)
+	}
+
 	if !found {
 		return nil, nil
 	}
@@ -425,7 +450,36 @@ func (c CWMetricAlarm) apply(ctx context.Context) error {
 
 // applyDiffs applies the changes to the resource from the diffs
 func (c CWMetricAlarm) applyDiffs(ctx context.Context, diffs ResourceDiff) error {
-	return c.apply(ctx)
+
+	alarmDiffs, ok := diffs.(*CWMetricAlarmDiff)
+	if !ok {
+		return errors.New("invalid diff type supplied")
+	}
+
+	// a tag-only drift needs no PutMetricAlarm; the definition is unchanged
+	if alarmDiffs.definitionDiff {
+		if err := c.apply(ctx); err != nil {
+			return err
+		}
+	}
+
+	// AWS ignores PutMetricAlarm's Tags on an existing alarm, so tag changes are applied
+	// separately against the alarm ARN
+	if alarmDiffs.tagsDiff {
+		cwService := awsw.NewCloudWatch(ctx, c.Context.ProviderName)
+		if upserts := alarmDiffs.tagDiff.Upserts(); len(upserts) > 0 {
+			if err := cwService.AddResourceTags(ctx, alarmDiffs.alarmArn, upserts); err != nil {
+				return errors.Wrapf(err, "error updating tags for cloudwatch metric alarm %v", c.Identifier())
+			}
+		}
+		if len(alarmDiffs.tagDiff.Deleted) > 0 {
+			if err := cwService.DeleteResourceTags(ctx, alarmDiffs.alarmArn, alarmDiffs.tagDiff.Deleted); err != nil {
+				return errors.Wrapf(err, "error deleting tags for cloudwatch metric alarm %v", c.Identifier())
+			}
+		}
+	}
+
+	return nil
 }
 
 // fetchExisting returns the existing cloudwatch alarm details if found

@@ -18,6 +18,12 @@ import (
 )
 
 // EventBridgeApiConnection contains the Connection Info for an Api Destination
+//
+// Connections carry no tags: AWS does not support tagging EventBridge connections
+// (TagResource covers rules and event buses only), so neither resource tags nor
+// globalTags — buildit:resource-id included — can reach a connection. The Tags field
+// exists only so Validate can reject a config that sets it, instead of dropping the
+// value silently.
 type EventBridgeApiConnection struct {
 	BaseResource `yaml:",inline"`
 	Arn                  string                           `yaml:"-"`
@@ -25,7 +31,6 @@ type EventBridgeApiConnection struct {
 	Description          *string                          `yaml:"description"`
 	ConnectionParameters *EventBridgeConnectionParameters `yaml:"connectionParameters"`
 	Tags                 map[string]string                `yaml:"tags"`
-	GlobalTags           map[string]string                `yaml:"-"`
 	DependsOn            []Key                            `yaml:"dependsOn"`
 }
 
@@ -125,6 +130,10 @@ func (c *EventBridgeApiConnection) Normalize(ctx context.Context) {
 func (c EventBridgeApiConnection) Validate(ctx context.Context) error {
 
 	var errMessages []string
+
+	if len(c.Tags) > 0 {
+		errMessages = append(errMessages, UnsupportedTagsMessage("eventbridge-connection"))
+	}
 
 	if c.ConnectionParameters == nil {
 		errMessages = append(errMessages, "connection parameters (auth & parameters) are required")

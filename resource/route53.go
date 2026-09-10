@@ -68,6 +68,7 @@ type Route53Record struct {
 	Destinations []string                    `yaml:"destinations"`  // destination, answer part of the DNS record; or alias target
 	TTL          *int64                      `yaml:"ttl"`           // record ttl in seconds, used for non-alias records
 	Policy       *Route53RecordRoutingPolicy `yaml:"routingPolicy"` // routing policy details if non-simple routing is required
+	Tags         map[string]string           `yaml:"tags"`          // rejected by Validate: record sets cannot be tagged
 	DependsOn    []Key                       `yaml:"dependsOn"`
 	dnsName      string                      // Parsed from Name
 	hostedZoneId *string                     // fetched during normalize
@@ -124,6 +125,10 @@ func (r *Route53Record) Normalize(ctx context.Context) {
 // Validate checks that the Route53Record has a valid configuration.
 func (r Route53Record) Validate(ctx context.Context) error {
 	var msgs []string
+
+	if len(r.Tags) > 0 {
+		msgs = append(msgs, UnsupportedTagsMessage("route53-record"))
+	}
 
 	if r.RecordName != nil && *r.RecordName == "" {
 		msgs = append(msgs, "record name is required")

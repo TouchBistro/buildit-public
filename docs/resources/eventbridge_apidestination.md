@@ -12,6 +12,7 @@ Creates an API destination, which is an HTTP invocation endpoint configured as a
 | `endpoint` | The URL to the HTTP invocation endpoint for the API destination | `string` | Yes |  |
 | `invocationRateLimitPerSecond` | The maximum number of requests per second to send to the HTTP invocation endpoint | `int32` | Yes |  |
 | `connectionName` | Name of the connection. Usually matches `name` | `string` | Yes |  |
+|`tags`|**Not supported — setting this field fails validation.** AWS does not support tags on EventBridge API destinations (the `TagResource` API covers rules and event buses only), so no tags — `globalTags` included — can reach an API destination|`map[string]string`|No|`{}`|
 |`dependsOn`|The `buildit` resources that this resource depends on in the context of the current execution. All resources that are listed in this section will be built before this; while destoryed after this|`[]string`|No|`[]`|
 Example:
 

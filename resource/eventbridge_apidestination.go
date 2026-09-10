@@ -28,7 +28,8 @@ type EventBridgeApiDestination struct {
 	Endpoint       *string `yaml:"endpoint"`
 	InvocationRate *int32  `yaml:"invocationRateLimitPerSecond"`
 	ConnectionName string  `yaml:"connectionName"`
-	DependsOn      []Key   `yaml:"dependsOn"`
+	Tags           map[string]string `yaml:"tags"` // rejected by Validate: api destinations cannot be tagged
+	DependsOn      []Key             `yaml:"dependsOn"`
 }
 
 // Key returns the unique key for the resource for this buildit context
@@ -59,6 +60,10 @@ func (d *EventBridgeApiDestination) Normalize(ctx context.Context) {
 func (d EventBridgeApiDestination) Validate(ctx context.Context) error {
 
 	var errMessages []string
+
+	if len(d.Tags) > 0 {
+		errMessages = append(errMessages, UnsupportedTagsMessage("eventbridge-apidestination"))
+	}
 
 	switch *d.Method {
 	case string(eventbridgetypes.ApiDestinationHttpMethodDelete),

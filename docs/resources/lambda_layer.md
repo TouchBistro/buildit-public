@@ -8,6 +8,8 @@ Check out AWS documentation for lambda [here](https://awscli.amazonaws.com/v2/do
 
 > Since AWS does not provide an API endpoint to fetch the existing layer content/code, `buildit` cannot perform a diff between the supplied & existing layer content. Everytime there is a change in the layer attributes, or the `publish` flag is set, a new version for the layer is pushed.
 
+> AWS does not support tags on Lambda layers (the `TagResource` API covers functions, event source mappings & code signing configurations only), so no tags — `globalTags` and `buildit:resource-id` included — can reach a layer. **Setting a `tags` field on a lambda-layer fails validation.**
+
 
 | Field | Description | DataType | Required | Default |
 |--|--|--|--|--|
