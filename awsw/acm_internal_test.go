@@ -1,6 +1,10 @@
 package awsw
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/TouchBistro/buildit/util"
+)
 
 // acmCertIDRegex decides whether an identifier is treated as a certificate id
 // (matched against the ARN's trailing "certificate/{id}" segment) or as a domain
@@ -27,6 +31,75 @@ func TestACMCertIDRegex(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := acmCertIDRegex.MatchString(tt.identifier); got != tt.isID {
 				t.Errorf("acmCertIDRegex.MatchString(%q) = %v, want %v", tt.identifier, got, tt.isID)
+			}
+		})
+	}
+}
+
+// pickCertificateByResourceID is the disambiguation policy for domains shared by several
+// certificates (DEVOPS-8880): exactly one buildit:resource-id-tagged candidate wins;
+// zero tagged means no pick (caller falls back to first-match); more than one tagged is
+// surfaced so the caller can fail loud.
+func TestPickCertificateByResourceID(t *testing.T) {
+	const key = util.BuilditResourceIDTagKey
+	arnA, arnB, arnC := "arn:aws:acm::123456789012:certificate/aaa", "arn:aws:acm::123456789012:certificate/bbb", "arn:aws:acm::123456789012:certificate/ccc"
+
+	tests := []struct {
+		name       string
+		candidates []certCandidate
+		want       string
+		pick       *string
+		taggedLen  int
+	}{
+		{
+			name: "single tagged candidate wins",
+			candidates: []certCandidate{
+				{arn: arnA, tags: map[string]string{"team": "example"}},
+				{arn: arnB, tags: map[string]string{key: "api.example.com"}},
+				{arn: arnC, tags: nil},
+			},
+			want: "api.example.com", pick: &arnB, taggedLen: 1,
+		},
+		{
+			name: "no tagged candidate yields no pick",
+			candidates: []certCandidate{
+				{arn: arnA, tags: map[string]string{}},
+				{arn: arnB, tags: map[string]string{key: "other.example.com"}},
+			},
+			want: "api.example.com", pick: nil, taggedLen: 0,
+		},
+		{
+			name: "two tagged candidates stay ambiguous",
+			candidates: []certCandidate{
+				{arn: arnA, tags: map[string]string{key: "api.example.com"}},
+				{arn: arnB, tags: map[string]string{key: "api.example.com"}},
+			},
+			want: "api.example.com", pick: nil, taggedLen: 2,
+		},
+		{
+			name: "wildcard domain matches only through SafeTagValue",
+			candidates: []certCandidate{
+				// The writer stamped SafeTagValue("*.example.com") — the reader must
+				// compare against the same sanitized form, never the raw domain.
+				{arn: arnA, tags: map[string]string{key: "_.example.com"}},
+			},
+			want: util.SafeTagValue("*.example.com"), pick: &arnA, taggedLen: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pick, tagged := pickCertificateByResourceID(tt.candidates, tt.want)
+			if len(tagged) != tt.taggedLen {
+				t.Errorf("tagged = %v, want %v entries", tagged, tt.taggedLen)
+			}
+			switch {
+			case tt.pick == nil && pick != nil:
+				t.Errorf("pick = %v, want nil", *pick)
+			case tt.pick != nil && pick == nil:
+				t.Errorf("pick = nil, want %v", *tt.pick)
+			case tt.pick != nil && pick != nil && *pick != *tt.pick:
+				t.Errorf("pick = %v, want %v", *pick, *tt.pick)
 			}
 		})
 	}

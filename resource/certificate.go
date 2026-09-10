@@ -23,9 +23,15 @@ const (
 )
 
 // ACMCertificate represents a CSR for ACM Certificates
+//
+// Name (the config key) is the resource's identity and its buildit:resource-id tag;
+// DomainName is the certificate's CN and defaults to Name. Keeping them separate (same
+// pattern as route53-record's recordName) lets two certificates share a CN in one config
+// scope under distinct names, with the resource-id tag telling their lifecycles apart.
 type ACMCertificate struct {
-	BaseResource `yaml:",inline"`
-	DomainName       string            `yaml:"-"`                       // the main domain for the CSR
+	BaseResource     `yaml:",inline"`
+	Name             string            `yaml:"-"`                       // resource name (config key); the Identifier and buildit:resource-id
+	DomainName       string            `yaml:"domainName"`              // the main domain (CN) for the CSR; defaults to Name
 	SAN              []string          `yaml:"san"`                     // a list of subject alternative names for the CSR
 	ValidationDomain string            `yaml:"dnsValidationDomainName"` // domain to use for validationin [provider/]domain-name format
 	Tags             map[string]string `yaml:"tags"`                    // tags to be added
@@ -38,13 +44,18 @@ func (c ACMCertificate) Key() Key {
 	return NewKey(c.Context.ProviderName, c.Identifier())
 }
 
-// Identifier returns the FQDN of the domain
+// Identifier returns the resource name, which defaults to the certificate's domain
 func (c ACMCertificate) Identifier() string {
-	return c.DomainName
+	return c.Name
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields.
 func (c *ACMCertificate) Normalize(ctx context.Context) {
+
+	// the certificate CN defaults to the resource name
+	if c.DomainName == "" {
+		c.DomainName = c.Name
+	}
 
 	// add a period if not supplied
 	if !strings.HasSuffix(c.ValidationDomain, ".") {
@@ -310,48 +321,35 @@ func (c ACMCertificate) applyDiffs(ctx context.Context, diffs ResourceDiff) erro
 	return nil
 }
 
-// fetchExisting returns the existing certificate details if found
+// fetchExisting returns the existing certificate details if found. The lookup goes
+// through the shared awsw lifecycle resolver (DEVOPS-8880): candidates are matched by
+// domain, and the buildit:resource-id tag — this resource's Name — decides which CN twin
+// is this resource's own, so compare and destroy operate on the certificate buildit
+// manages rather than an arbitrary twin.
 func (c ACMCertificate) fetchExisting(ctx context.Context) (*acmtypes.CertificateDetail, error) {
 
-	acmClient := client.ACM(ctx, c.Context.ProviderName)
-	done := false
-	var nextToken *string
-	for !done {
-		out, err := acmClient.ListCertificates(ctx, &acm.ListCertificatesInput{
-			NextToken: nextToken,
-		})
-
-		if err != nil {
-			return nil, errors.Wrap(err, "error listing acm certificates")
-		}
-
-		for _, awsCert := range out.CertificateSummaryList {
-			if *awsCert.DomainName == c.DomainName {
-				descResp, err := acmClient.DescribeCertificate(ctx, &acm.DescribeCertificateInput{
-					CertificateArn: awsCert.CertificateArn,
-				})
-				if err != nil {
-					// this err is returned if the certificateId doesn't exists & not another API error.
-					// when a certificate is being deleted, it's possible that between the
-					// earlier call to ListCertificates() & DescribeCertificate() the certificate
-					// has been removed. When this happens we don't return an err, rather this indicates
-					// that the certificate simply doesn't exists anymore; so a nil, nil
-					var rnfe *acmtypes.ResourceNotFoundException
-					if errors.As(err, &rnfe) {
-						return nil, nil
-					}
-					return nil, errors.Wrapf(err, "error describing certificate %v", c.DomainName)
-				}
-				return descResp.Certificate, nil
-			}
-		}
-		if out.NextToken == nil {
-			done = true
-		}
-		nextToken = out.NextToken
+	arn, err := awsw.NewACM(ctx, c.Context.ProviderName).FindCertificateForResource(ctx, c.DomainName, c.Identifier())
+	if err != nil {
+		return nil, errors.Wrapf(err, "error resolving acm certificate %v", c.Identifier())
+	}
+	if arn == nil {
+		return nil, nil
 	}
 
-	return nil, nil
+	descResp, err := client.ACM(ctx, c.Context.ProviderName).DescribeCertificate(ctx, &acm.DescribeCertificateInput{
+		CertificateArn: arn,
+	})
+	if err != nil {
+		// When a certificate is being deleted, it's possible that between the lookup
+		// and DescribeCertificate the certificate has been removed. That is not an
+		// error — the certificate simply doesn't exist anymore; so nil, nil.
+		var rnfe *acmtypes.ResourceNotFoundException
+		if errors.As(err, &rnfe) {
+			return nil, nil
+		}
+		return nil, errors.Wrapf(err, "error describing certificate %v", c.DomainName)
+	}
+	return descResp.Certificate, nil
 }
 
 // validateCertificate performs certificte validation

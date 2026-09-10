@@ -9,7 +9,7 @@ This is a child resource of [load balancer](./load_balancer.md). Creates or upda
 | Field | Description | DataType | Required | Default |
 |--|--|--|--|--|
 |`name`|A name for the load balancer listener |`string`|Yes||
-|`certificates`|The list of certificates for the listener. First one is considered default |`[]string`|Yes||
+|`certificates`|The list of certificates for the listener (ARN, certificate id, or domain name; when several certificates share a domain, the one tagged `buildit:resource-id` wins — see [certificate lookup](./acm_certificate.md)). First one is considered default |`[]string`|Yes||
 |`protocol`|The protocol for connections from clients to the load balancer. For `application` type, valid values: `HTTP` and `HTTPS`. For `network` type, valid values: `TCP`, `TLS`, `UDP` |`string`|Yes||
 |`sslPolicy`|The security policy that defines which protocols and ciphers are supported |`string`|No|`ELBSecurityPolicy-TLS13-1-1-2021-06`|
 |`port`|The port on which the load balancer is listening |`int32`|Yes||

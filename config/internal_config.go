@@ -149,9 +149,8 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				return err
 			}
 
-			r.DomainName = *eId
+			r.Name = *eId
 			r.Context.ProviderName = *ePr
-			// r.DomainName = n
 			addErr(checkReservedTags("certificate", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
 			r.Normalize(ctx)

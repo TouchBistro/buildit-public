@@ -21,7 +21,7 @@ Plan/apply diff output renders resolved identifiers as the values you wrote in Y
 | `enabled` | Whether the distribution is enabled | `bool` | No | `true` |
 | `defaultRootObject` | Object returned for requests to the root URL | `string` | No | `""` |
 | `aliases` | Alternate domain names (CNAMEs). Require `certificate` | `[]string` | No | |
-| `certificate` | ACM certificate ARN, certificate id (UUID), **or** domain name (resolved like load balancer listeners). Must be in us-east-1. If unset, the default CloudFront certificate is used | `string` | No | default CloudFront cert |
+| `certificate` | ACM certificate ARN, certificate id (UUID), **or** domain name (resolved like load balancer listeners; when several certificates share the domain, the one tagged `buildit:resource-id` wins — see [certificate lookup](./acm_certificate.md)). Must be in us-east-1. If unset, the default CloudFront certificate is used | `string` | No | default CloudFront cert |
 | `minimumProtocolVersion` | Minimum TLS version (used with a custom `certificate`) | `string` | No | `TLSv1.2_2021` |
 | `sslSupportMethod` | `sni-only` \| `vip` \| `static-ip` (used with a custom `certificate`) | `string` | No | `sni-only` |
 | `httpVersion` | `http1.1` \| `http2` \| `http3` \| `http2and3` | `string` | No | `http2and3` |

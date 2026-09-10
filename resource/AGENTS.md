@@ -170,7 +170,7 @@ type MyResource struct {
 
 | Service              | Method                                                                           | Support Tiers                        |
 | :------------------- | :------------------------------------------------------------------------------- | :----------------------------------- |
-| **ACM**              | `CertificateArnForIdentifier` (`NewACM` regional; `NewACMGlobal` pinned us-east-1 for CloudFront viewer certs) | ARN, ID (UUID), Domain Name          |
+| **ACM**              | `CertificateArnForIdentifier` (`NewACM` regional; `NewACMGlobal` pinned us-east-1 for CloudFront viewer certs); `FindCertificateByIdentifier` — returns `(nil, nil)` when absent; `FindCertificateForResource(domain, resourceID)` — lifecycle lookup for the certificate resource itself: matches by domain, ownership decided by the resource-id tag (a lone CN twin tagged for another resource is not adopted; a resource-id found on a different domain errors — CNs are immutable). Shared-domain ties are broken by the `buildit:resource-id` tag (compared via `util.SafeTagValue`, same as the writer) | ARN, ID (UUID), Domain Name (+ resource-id tag tiebreak), buildit resource name (via resource-id tag when no domain matches) |
 | **Bedrock**          | `ApplicationInferenceProfileByName`                                              | Name                                 |
 | **CloudFront**       | `VpcOriginByIdentifier`, `VpcOriginIdForIdentifier`, `FunctionArnForIdentifier` | ID, Name / ARN, Name                 |
 | **CloudFront**       | `FindVpcOriginByName` — lifecycle lookup: returns `(nil, nil)` when absent       | Name                                 |
