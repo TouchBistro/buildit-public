@@ -2,6 +2,9 @@ package resource
 
 import (
 	"context"
+	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -33,10 +36,13 @@ type ACMCertificate struct {
 	Name             string            `yaml:"-"`                       // resource name (config key); the Identifier and buildit:resource-id
 	DomainName       string            `yaml:"domainName"`              // the main domain (CN) for the CSR; defaults to Name
 	SAN              []string          `yaml:"san"`                     // a list of subject alternative names for the CSR
-	ValidationDomain string            `yaml:"dnsValidationDomainName"` // domain to use for validationin [provider/]domain-name format
+	ValidationDomain string            `yaml:"dnsValidationDomainName"` // optional hosted zone for every validation CNAME, [provider/]zone or provider::zone; empty = discover per record
+	ValidationZones  map[string]string `yaml:"dnsValidationZones"`      // optional hosted zone per domain (CN and each SAN), same value format; every domain must be listed
 	Tags             map[string]string `yaml:"tags"`                    // tags to be added
 	GlobalTags       map[string]string `yaml:"-"`
 	DependsOn        []Key             `yaml:"-"`
+
+	validationZones map[string]string // explicit placement per normalized domain, folded from the two fields above by Normalize; nil = discover
 }
 
 // Key returns the unique key for the resource for this buildit context
@@ -57,10 +63,11 @@ func (c *ACMCertificate) Normalize(ctx context.Context) {
 		c.DomainName = c.Name
 	}
 
-	// add a period if not supplied
-	if !strings.HasSuffix(c.ValidationDomain, ".") {
+	// add a period if not supplied; empty means the hosted zone is discovered per validation record
+	if c.ValidationDomain != "" && !strings.HasSuffix(c.ValidationDomain, ".") {
 		c.ValidationDomain += "."
 	}
+	c.validationZones = c.resolveValidationZones()
 
 	// merge globalTags to certificate tags
 	if c.Tags == nil {
@@ -70,9 +77,79 @@ func (c *ACMCertificate) Normalize(ctx context.Context) {
 	ResourceTags(c.Tags).Merge(c.GlobalTags)
 }
 
-// Validate checks that the input provided is correct
+// resolveValidationZones folds the two explicit placement fields into one lookup keyed by
+// normalized domain, so Compare, Apply and Destroy consult a single source. dnsValidationZones
+// wins; a lone dnsValidationDomainName still means "every domain in that one zone"; neither
+// leaves the map nil and the zone to discovery. Discovery itself stays out of Normalize: it
+// reaches Route53 and must fail the plan with a scoped error, not every command with a panic.
+func (c ACMCertificate) resolveValidationZones() map[string]string {
+	switch {
+	case len(c.ValidationZones) > 0:
+		zones := make(map[string]string, len(c.ValidationZones))
+		for domain, zone := range c.ValidationZones {
+			if zone != "" && !strings.HasSuffix(zone, ".") {
+				zone += "."
+			}
+			zones[awsw.NormalizeDNSName(domain)] = zone
+		}
+		return zones
+	case c.ValidationDomain != "":
+		zones := make(map[string]string, len(c.SAN)+1)
+		for _, domain := range c.certificateDomains() {
+			zones[awsw.NormalizeDNSName(domain)] = c.ValidationDomain
+		}
+		return zones
+	default:
+		return nil
+	}
+}
+
+// certificateDomains is the CN followed by every SAN, as written in the config.
+func (c ACMCertificate) certificateDomains() []string {
+	return append([]string{c.DomainName}, c.SAN...)
+}
+
+// Validate checks that the input provided is correct. dnsValidationZones is all-or-nothing:
+// when set it must name a zone for the CN and every SAN (a mapped subset would silently mix
+// explicit placement with discovery), and it cannot be combined with dnsValidationDomainName.
 func (c ACMCertificate) Validate(ctx context.Context) error {
-	return nil
+	var msgs []string
+
+	if len(c.ValidationZones) > 0 {
+		if c.ValidationDomain != "" {
+			msgs = append(msgs, "set either dnsValidationZones or dnsValidationDomainName, not both")
+		}
+
+		domains := make(map[string]string, len(c.SAN)+1) // normalized → as written
+		for _, d := range c.certificateDomains() {
+			domains[awsw.NormalizeDNSName(d)] = d
+		}
+		covered := make(map[string]struct{}, len(c.ValidationZones))
+		for _, key := range slices.Sorted(maps.Keys(c.ValidationZones)) {
+			normalized := awsw.NormalizeDNSName(key)
+			if _, ok := domains[normalized]; !ok {
+				msgs = append(msgs, fmt.Sprintf("dnsValidationZones key %q is not the certificate domain or a san", key))
+			}
+			if strings.TrimSpace(c.ValidationZones[key]) == "" {
+				msgs = append(msgs, fmt.Sprintf("dnsValidationZones entry %q has no hosted zone", key))
+			}
+			covered[normalized] = struct{}{}
+		}
+		for _, normalized := range slices.Sorted(maps.Keys(domains)) {
+			if _, ok := covered[normalized]; !ok {
+				msgs = append(msgs, fmt.Sprintf("dnsValidationZones has no entry for %q; list every domain on the certificate, or omit the field to discover zones", domains[normalized]))
+			}
+		}
+	}
+
+	if len(msgs) == 0 {
+		return nil
+	}
+	return &ValidationError{
+		ResourceType:       "certificate",
+		ResourceIdentifier: c.Identifier(),
+		Messages:           msgs,
+	}
 }
 
 // Apply request a new certificate, and performs DNS domain validation
@@ -165,6 +242,14 @@ func (c ACMCertificate) Compare(ctx context.Context) (ResourceDiff, error) {
 	}
 
 	diffs := &ACMCertificateDiff{}
+
+	// A certificate that still needs its validation records written must be able to place
+	// them: fail the plan here, before RequestCertificate, when no zone can be discovered.
+	if existing == nil || existing.Status == acmtypes.CertificateStatusPendingValidation {
+		if err := c.checkValidationZones(ctx); err != nil {
+			return nil, err
+		}
+	}
 
 	if existing == nil {
 		diffs.Messages = append(diffs.Messages, "certificate does not exist")
@@ -323,9 +408,9 @@ func (c ACMCertificate) applyDiffs(ctx context.Context, diffs ResourceDiff) erro
 
 // fetchExisting returns the existing certificate details if found. The lookup goes
 // through the shared awsw lifecycle resolver (DEVOPS-8880): candidates are matched by
-// domain, and the buildit:resource-id tag — this resource's Name — decides which CN twin
-// is this resource's own, so compare and destroy operate on the certificate buildit
-// manages rather than an arbitrary twin.
+// domain, and the buildit:resource-id tag — this resource's Name — decides which of the
+// same-CN certificates is this resource's own, so compare and destroy operate on the
+// certificate buildit manages rather than an arbitrary one.
 func (c ACMCertificate) fetchExisting(ctx context.Context) (*acmtypes.CertificateDetail, error) {
 
 	arn, err := awsw.NewACM(ctx, c.Context.ProviderName).FindCertificateForResource(ctx, c.DomainName, c.Identifier())
@@ -463,7 +548,9 @@ func waitUntilCertificateValidated(ctx context.Context, providerName string, cer
 }
 
 // manageDNSValidation uses the validation information provided to add/upsert or remove corresponding DNS
-// validation entries for the certificate domain name and all subject alternative names (SAN)
+// validation entries for the certificate domain name and all subject alternative names (SAN). Each record
+// is placed in the zone resolveValidationTarget picks for it, so the create and destroy paths always agree
+// on where a record lives.
 func (c ACMCertificate) manageDNSValidation(ctx context.Context, validations []acmtypes.DomainValidation, clear bool) error {
 
 	//check for duplicate validation records
@@ -471,39 +558,37 @@ func (c ACMCertificate) manageDNSValidation(ctx context.Context, validations []a
 
 	//build a change record for each validation; ignoring the duplicate ones
 	for _, val := range validations {
+		// ACM has not produced a record yet (a destroy racing a fresh request); nothing to place or remove
+		if val.ResourceRecord == nil || val.ResourceRecord.Name == nil || val.ResourceRecord.Value == nil {
+			log.WithField("Domain", aws.ToString(val.DomainName)).Debug("validation option has no resource record yet, skipping")
+			continue
+		}
 		//de-dupe the validation records, since sometimes the SAN with a wildcard
 		//results in an identical DNS validation record
 		if _, ok := validationDupes[*val.ResourceRecord.Name]; ok {
 			continue
 		}
 
-		delim := "::"
-		// check if :: is not used as delimiter, then use legacy /
-		if !strings.Contains(c.ValidationDomain, "::") {
-			delim = "/"
-		}
-		providerName, validationDomain := NewKeyWithDelim(delim, c.ValidationDomain).Split()
-
-		recordFqdn := val.ResourceRecord.Name
+		recordFqdn := *val.ResourceRecord.Name
 		destination := *val.ResourceRecord.Value
 
-		// string the namespace/domain fromt he validation record name
-		recordName := *recordFqdn
-		if strings.HasSuffix(*recordFqdn, validationDomain) {
-			recordName = recordName[:len(recordName)-len(validationDomain)-1] // strip out the validation domain part to form the record name part only
+		target, err := c.resolveValidationTarget(ctx, aws.ToString(val.DomainName), recordFqdn)
+		if err != nil {
+			return err
 		}
-		recordName = providerName + "/" + recordName // append provider
+
 		record := Route53Record{
 			BaseResource: BaseResource{
 				Context: Context{
-					ProviderName: providerName,
+					ProviderName: target.provider,
 				},
 			},
-			Name:         recordName,
-			HostedZone:   validationDomain,
+			Name:         target.provider + "/" + validationRecordName(recordFqdn, target.zone),
+			HostedZone:   target.zone,
 			TTL:          aws.Int64(10800),
 			Type:         aws.String(RecordTypeCNAME),
 			Destinations: []string{destination},
+			hostedZoneId: target.zoneID, // set when discovered; Normalize looks it up by name otherwise
 		}
 		record.Normalize(ctx)
 
@@ -522,4 +607,123 @@ func (c ACMCertificate) manageDNSValidation(ctx context.Context, validations []a
 	}
 
 	return nil
+}
+
+// validationTarget is where one validation CNAME lives: the provider whose Route53 holds the
+// zone, the zone name (trailing dot), and the zone id when discovery already resolved it.
+type validationTarget struct {
+	provider string
+	zone     string
+	zoneID   *string
+}
+
+// resolveValidationTarget decides the hosted zone for the validation record of one certificate
+// domain (the CN or a SAN, as ACM reports it). An explicit placement — dnsValidationZones for
+// that domain, or a lone dnsValidationDomainName for all of them — is honoured exactly as
+// written and never reaches AWS (DEVOPS-8968 keeps existing configs byte-for-byte compatible).
+// Otherwise the zone is discovered in the certificate's own provider as the longest public
+// suffix of the record — see awsw.Route53.FindHostedZoneForRecord.
+func (c ACMCertificate) resolveValidationTarget(ctx context.Context, domain, recordFqdn string) (validationTarget, error) {
+	if explicit, ok := c.validationZones[awsw.NormalizeDNSName(domain)]; ok {
+		provider, zone := explicitValidationTarget(explicit)
+		return validationTarget{provider: provider, zone: zone}, nil
+	}
+	// a domain ACM spells differently from the config still lands in the legacy single zone
+	if c.ValidationDomain != "" {
+		provider, zone := explicitValidationTarget(c.ValidationDomain)
+		return validationTarget{provider: provider, zone: zone}, nil
+	}
+
+	hz, err := awsw.NewRoute53(ctx, c.Context.ProviderName).FindHostedZoneForRecord(ctx, recordFqdn)
+	if err != nil {
+		return validationTarget{}, errors.Wrapf(err, "cannot place validation dns record for certificate %v", c.Identifier())
+	}
+
+	log.WithFields(log.Fields{
+		"Name":        c.Identifier(),
+		"Record":      recordFqdn,
+		"Hosted Zone": aws.ToString(hz.Name),
+	}).Debug("discovered hosted zone for validation record")
+
+	return validationTarget{
+		provider: c.Context.ProviderName,
+		zone:     aws.ToString(hz.Name),
+		zoneID:   hz.Id,
+	}, nil
+}
+
+// explicitValidationTarget splits a dnsValidationDomainName or dnsValidationZones value into
+// provider and zone. Both the legacy "provider/zone" and the "provider::zone" forms are
+// accepted; a bare zone means the main provider. The zone keeps the trailing dot Normalize added.
+func explicitValidationTarget(validationDomain string) (provider, zone string) {
+	delim := "::"
+	// check if :: is not used as delimiter, then use legacy /
+	if !strings.Contains(validationDomain, "::") {
+		delim = "/"
+	}
+	return NewKeyWithDelim(delim, validationDomain).Split()
+}
+
+// validationRecordName strips the zone from a validation record FQDN, leaving the relative
+// record name Route53Record expects ("_abc.api" for "_abc.api.example.com." in "example.com.").
+// A record that is not under the zone (an explicit dnsValidationDomainName that does not own
+// it) is passed through untouched, exactly as before.
+func validationRecordName(recordFqdn, zone string) string {
+	if recordFqdn != zone && strings.HasSuffix(recordFqdn, "."+zone) {
+		return strings.TrimSuffix(recordFqdn, "."+zone)
+	}
+	return recordFqdn
+}
+
+// checkValidationZones is the plan-time half of zone discovery: every domain left to discovery
+// must resolve to a public hosted zone in the resource's provider, or the plan fails with the
+// discovery error before ACM is touched. A validation record "_abc.<domain>." is one leaf label
+// below its domain, so the zone that owns the domain is the zone that owns the record. Domains
+// with an explicit placement are skipped: the operator has named the zone, and the record is
+// written there whatever it is.
+func (c ACMCertificate) checkValidationZones(ctx context.Context) error {
+	domains := validationLookupDomains(c.discoveredDomains())
+	if len(domains) == 0 {
+		return nil
+	}
+
+	r53 := awsw.NewRoute53(ctx, c.Context.ProviderName)
+	for _, domain := range domains {
+		if _, err := r53.FindHostedZoneForRecord(ctx, domain); err != nil {
+			return errors.Wrapf(err, "cannot place validation dns record for certificate %v", c.Identifier())
+		}
+	}
+	return nil
+}
+
+// discoveredDomains lists the CN and SANs whose hosted zone is left to discovery: those without
+// an explicit placement. A lone dnsValidationDomainName covers every domain, so none remain.
+func (c ACMCertificate) discoveredDomains() []string {
+	if c.ValidationDomain != "" {
+		return nil
+	}
+	var domains []string
+	for _, d := range c.certificateDomains() {
+		if _, ok := c.validationZones[awsw.NormalizeDNSName(d)]; !ok {
+			domains = append(domains, d)
+		}
+	}
+	return domains
+}
+
+// validationLookupDomains returns the distinct domains whose hosted zone must exist for the
+// certificate to validate, with a leading wildcard label removed (the validation record for
+// "*.example.com" is "_abc.example.com.").
+func validationLookupDomains(domains []string) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	for _, d := range domains {
+		d = awsw.NormalizeDNSName(strings.TrimPrefix(d, "*."))
+		if _, dup := seen[d]; d == "." || dup {
+			continue
+		}
+		seen[d] = struct{}{}
+		out = append(out, d)
+	}
+	return out
 }

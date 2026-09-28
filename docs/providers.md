@@ -133,7 +133,7 @@ The following resource definitions can use both the `::` or legacy `/` separator
 ### References:
 
 - When referencing a security group in the `inboundRules->securityGroups[].value` or `outboundRules->securityGroups[].value` field of a `security-group` resource definition, we use `provider/id` format to reference a security group in other AWS account/provider. e.g `production/other-sg`
-When referencing a `dnsValidationDomainName` for an ACM `certificate` resource, we still use the `provider/id` format to reference a DNS Hosted Zone in another account/provider.
+- When referencing a `dnsValidationDomainName` (one zone for every domain) or a `dnsValidationZones` value (one zone per CN/SAN) for an ACM `certificate` resource, both `provider/zone` and `provider::zone` reference a DNS Hosted Zone in another account/provider. Both fields are optional: when neither is set, the hosted zone is discovered in the certificate's own provider (see [ACM Certificate](./resources/acm_certificate.md#dns-validation)).
 - When referencing a secret in the `taskDef` resource `secrets` section, we still use the `provider/secret_fqn` where example of this could be `EMAIL_PASSWORD: "production/secret_name:key::"` indicating a secret `secret_name`, json key `key` & version `latest` (Default) to from the `production` provider/account to be injected here.
 
 

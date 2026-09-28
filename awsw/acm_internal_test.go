@@ -45,11 +45,12 @@ func TestPickCertificateByResourceID(t *testing.T) {
 	arnA, arnB, arnC := "arn:aws:acm::123456789012:certificate/aaa", "arn:aws:acm::123456789012:certificate/bbb", "arn:aws:acm::123456789012:certificate/ccc"
 
 	tests := []struct {
-		name       string
-		candidates []certCandidate
-		want       string
-		pick       *string
-		taggedLen  int
+		name         string
+		candidates   []certCandidate
+		want         string
+		pick         *string
+		taggedLen    int
+		unclaimedLen int
 	}{
 		{
 			name: "single tagged candidate wins",
@@ -58,15 +59,26 @@ func TestPickCertificateByResourceID(t *testing.T) {
 				{arn: arnB, tags: map[string]string{key: "api.example.com"}},
 				{arn: arnC, tags: nil},
 			},
-			want: "api.example.com", pick: &arnB, taggedLen: 1,
+			want: "api.example.com", pick: &arnB, taggedLen: 1, unclaimedLen: 2,
 		},
 		{
-			name: "no tagged candidate yields no pick",
+			name: "no tagged candidate yields no pick; the untagged one is unclaimed",
 			candidates: []certCandidate{
 				{arn: arnA, tags: map[string]string{}},
 				{arn: arnB, tags: map[string]string{key: "other.example.com"}},
 			},
-			want: "api.example.com", pick: nil, taggedLen: 0,
+			want: "api.example.com", pick: nil, taggedLen: 0, unclaimedLen: 1,
+		},
+		{
+			// Two same-CN certificates already created by two other resources in the
+			// same config: nothing is unclaimed, so the third resource creates its own
+			// (the case that failed as "none carries buildit:resource-id" before).
+			name: "every same-CN certificate claimed by another resource leaves nothing unclaimed",
+			candidates: []certCandidate{
+				{arn: arnA, tags: map[string]string{key: "example-cert-dupe"}},
+				{arn: arnB, tags: map[string]string{key: "example-cert-ncerts"}},
+			},
+			want: "example-cert-orig", pick: nil, taggedLen: 0, unclaimedLen: 0,
 		},
 		{
 			name: "two tagged candidates stay ambiguous",
@@ -74,7 +86,7 @@ func TestPickCertificateByResourceID(t *testing.T) {
 				{arn: arnA, tags: map[string]string{key: "api.example.com"}},
 				{arn: arnB, tags: map[string]string{key: "api.example.com"}},
 			},
-			want: "api.example.com", pick: nil, taggedLen: 2,
+			want: "api.example.com", pick: nil, taggedLen: 2, unclaimedLen: 0,
 		},
 		{
 			name: "wildcard domain matches only through SafeTagValue",
@@ -83,23 +95,26 @@ func TestPickCertificateByResourceID(t *testing.T) {
 				// compare against the same sanitized form, never the raw domain.
 				{arn: arnA, tags: map[string]string{key: "_.example.com"}},
 			},
-			want: util.SafeTagValue("*.example.com"), pick: &arnA, taggedLen: 1,
+			want: util.SafeTagValue("*.example.com"), pick: &arnA, taggedLen: 1, unclaimedLen: 0,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pick, tagged := pickCertificateByResourceID(tt.candidates, tt.want)
-			if len(tagged) != tt.taggedLen {
-				t.Errorf("tagged = %v, want %v entries", tagged, tt.taggedLen)
+			got := pickCertificateByResourceID(tt.candidates, tt.want)
+			if len(got.tagged) != tt.taggedLen {
+				t.Errorf("tagged = %v, want %v entries", got.tagged, tt.taggedLen)
+			}
+			if len(got.unclaimed) != tt.unclaimedLen {
+				t.Errorf("unclaimed = %v, want %v entries", got.unclaimed, tt.unclaimedLen)
 			}
 			switch {
-			case tt.pick == nil && pick != nil:
-				t.Errorf("pick = %v, want nil", *pick)
-			case tt.pick != nil && pick == nil:
+			case tt.pick == nil && got.picked != nil:
+				t.Errorf("pick = %v, want nil", *got.picked)
+			case tt.pick != nil && got.picked == nil:
 				t.Errorf("pick = nil, want %v", *tt.pick)
-			case tt.pick != nil && pick != nil && *pick != *tt.pick:
-				t.Errorf("pick = %v, want %v", *pick, *tt.pick)
+			case tt.pick != nil && got.picked != nil && *got.picked != *tt.pick:
+				t.Errorf("pick = %v, want %v", *got.picked, *tt.pick)
 			}
 		})
 	}

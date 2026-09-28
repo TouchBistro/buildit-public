@@ -111,10 +111,13 @@ func (r *Route53Record) Normalize(ctx context.Context) {
 		r.Type = aws.String(RecordTypeA)
 	}
 
-	// populate hosted zone to avoid multiple lookups
-	hostedZoneId, err := awsw.NewRoute53(ctx, r.Context.ProviderName).FindHostedZoneIdForDomain(ctx, r.HostedZone)
-	if err == nil {
-		r.hostedZoneId = hostedZoneId
+	// populate hosted zone to avoid multiple lookups; a caller that already resolved the
+	// zone (certificate validation records) sets hostedZoneId up front and skips the lookup
+	if r.hostedZoneId == nil {
+		hostedZoneId, err := awsw.NewRoute53(ctx, r.Context.ProviderName).FindHostedZoneIdForDomain(ctx, r.HostedZone)
+		if err == nil {
+			r.hostedZoneId = hostedZoneId
+		}
 	}
 
 	if r.TTL == nil {

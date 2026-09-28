@@ -116,22 +116,22 @@ func (a ACM) FindCertificateByIdentifier(ctx context.Context, identifier string)
 		// certificate a name that matches no CN. Costs one ListTagsForCertificate
 		// call per certificate in the account, and only on what was previously the
 		// not-found path.
-		picked, tagged, err := acmService.resolveByResourceIDTag(ctx, scan.allArns, want)
+		pick, err := acmService.resolveByResourceIDTag(ctx, scan.allArns, want)
 		if err != nil {
 			return nil, err
 		}
-		if len(tagged) > 1 {
+		if len(pick.tagged) > 1 {
 			return nil, errors.Errorf(
 				"multiple certificates carry buildit:resource-id=%q — cannot disambiguate: %v",
-				want, tagged)
+				want, pick.tagged)
 		}
-		if picked != nil {
+		if pick.picked != nil {
 			log.WithFields(log.Fields{
 				"Name": resource,
-				"ARN":  *picked,
+				"ARN":  *pick.picked,
 			}).Debug("identifier matched no domain; resolved by buildit:resource-id tag")
 		}
-		return picked, nil
+		return pick.picked, nil
 	case 1:
 		return &scan.domainMatches[0], nil
 	}
@@ -139,26 +139,26 @@ func (a ACM) FindCertificateByIdentifier(ctx context.Context, identifier string)
 	// Ambiguous domain: consult the buildit:resource-id tag on each candidate. One
 	// sequential ListTagsForCertificate call per candidate — bounded by the domain
 	// collision count (typically 2-3), not by the account's total certificates.
-	picked, tagged, err := acmService.resolveByResourceIDTag(ctx, scan.domainMatches, want)
+	pick, err := acmService.resolveByResourceIDTag(ctx, scan.domainMatches, want)
 	if err != nil {
 		return nil, err
 	}
 	switch {
-	case len(tagged) > 1:
+	case len(pick.tagged) > 1:
 		return nil, errors.Errorf(
 			"multiple certificates for domain %q carry buildit:resource-id=%q — cannot disambiguate: %v",
-			resource, want, tagged)
-	case picked != nil:
+			resource, want, pick.tagged)
+	case pick.picked != nil:
 		log.WithFields(log.Fields{
 			"Domain": resource,
-			"ARN":    *picked,
+			"ARN":    *pick.picked,
 		}).Debug("multiple certificates share the domain; picked the buildit:resource-id-tagged one")
-		return picked, nil
+		return pick.picked, nil
 	default:
 		// No candidate is buildit-managed either: any pick would be arbitrary (the
 		// old behavior silently took whichever listed first). Per the awsw
 		// resolution convention, ambiguity fails loud at plan time instead of
-		// wiring a consumer to the wrong CN twin.
+		// wiring a consumer to the wrong same-CN certificate.
 		return nil, errors.Errorf(
 			"%d certificates match domain %q and none carries buildit:resource-id=%q — manage the certificate with buildit (or tag it), or reference it by ARN, certificate id, or its buildit resource name: %v",
 			len(scan.domainMatches), resource, want, scan.domainMatches)
@@ -173,11 +173,16 @@ func (a ACM) FindCertificateByIdentifier(ctx context.Context, identifier string)
 // exist yet.
 //
 // Selection:
-//   - one domain match: adopted when untagged or tagged as this resource; a CN twin
+//   - one domain match: adopted when untagged or tagged as this resource; a match
 //     tagged for a DIFFERENT resource is not this one's — (nil, nil), so a second
 //     same-CN resource creates its own certificate instead of retagging the first.
-//   - several domain matches: the buildit:resource-id tag decides, exactly as in
-//     FindCertificateByIdentifier.
+//   - several domain matches (any number): the buildit:resource-id tag decides. One
+//     tagged as this resource wins; when every match is tagged for a DIFFERENT
+//     resource none is this one's — (nil, nil), same as the single-match rule, so the
+//     Nth same-CN resource creates its own certificate; an untagged match leaves the
+//     lookup unsettled and fails loud, since adopting it would retag a certificate
+//     nobody has claimed. Only the single-match case adopts an untagged certificate:
+//     that is how certificates created before the tag existed acquire it.
 //   - no domain match, and the resource is explicitly named (resourceID != domain): a
 //     certificate elsewhere already carrying this resource-id means the config's
 //     domainName changed under a stable name. Certificate domains are immutable, so
@@ -198,14 +203,14 @@ func (a ACM) FindCertificateForResource(ctx context.Context, domain, resourceID 
 			// certificate does not exist; nothing to guard, no extra API calls.
 			return nil, nil
 		}
-		_, tagged, err := a.resolveByResourceIDTag(ctx, scan.allArns, want)
+		pick, err := a.resolveByResourceIDTag(ctx, scan.allArns, want)
 		if err != nil {
 			return nil, err
 		}
-		if len(tagged) > 0 {
+		if len(pick.tagged) > 0 {
 			return nil, errors.Errorf(
 				"buildit:resource-id=%q already marks certificate(s) %v, whose domain is not %q — a certificate's domain cannot change; destroy the certificate first or rename the resource",
-				want, tagged, domain)
+				want, pick.tagged, domain)
 		}
 		return nil, nil
 	case 1:
@@ -220,27 +225,32 @@ func (a ACM) FindCertificateForResource(ctx context.Context, domain, resourceID 
 		}
 		if id, ok := tags[util.BuilditResourceIDTagKey]; ok && id != want {
 			// The single CN match belongs to another buildit resource; treating it
-			// as this one's would retag — and thereby steal — the twin.
+			// as this one's would retag — and thereby steal — that certificate.
 			return nil, nil
 		}
 		return &arn, nil
 	}
 
-	picked, tagged, err := a.resolveByResourceIDTag(ctx, scan.domainMatches, want)
+	pick, err := a.resolveByResourceIDTag(ctx, scan.domainMatches, want)
 	if err != nil {
 		return nil, err
 	}
 	switch {
-	case len(tagged) > 1:
+	case len(pick.tagged) > 1:
 		return nil, errors.Errorf(
 			"multiple certificates for domain %q carry buildit:resource-id=%q — cannot disambiguate: %v",
-			domain, want, tagged)
-	case picked != nil:
-		return picked, nil
+			domain, want, pick.tagged)
+	case pick.picked != nil:
+		return pick.picked, nil
+	case len(pick.unclaimed) == 0:
+		// Every same-CN certificate is claimed by another buildit resource, however
+		// many there are, so none is this one's: create, exactly as the single
+		// claimed match above does.
+		return nil, nil
 	default:
 		return nil, errors.Errorf(
-			"%d certificates match domain %q and none carries buildit:resource-id=%q — manage the certificate with buildit (or tag it) or reference it by ARN/certificate id: %v",
-			len(scan.domainMatches), domain, want, scan.domainMatches)
+			"%d certificates match domain %q and none carries buildit:resource-id=%q; %d of them carry no buildit:resource-id at all, so the match cannot be settled — manage the certificate with buildit (or tag it) or reference it by ARN/certificate id: %v",
+			len(scan.domainMatches), domain, want, len(pick.unclaimed), pick.unclaimed)
 	}
 }
 
@@ -323,7 +333,7 @@ func (a ACM) scanCertificates(ctx context.Context, domain string) (certificateSc
 // picks the single one whose value equals want. One ListTagsForCertificate call per
 // candidate; a candidate deleted between List and ListTags is skipped rather than
 // failing the whole lookup.
-func (a ACM) resolveByResourceIDTag(ctx context.Context, arns []string, want string) (*string, []string, error) {
+func (a ACM) resolveByResourceIDTag(ctx context.Context, arns []string, want string) (certificatePick, error) {
 	candidates := make([]certCandidate, 0, len(arns))
 	for _, arn := range arns {
 		tags, err := a.GetResourceTags(ctx, arn)
@@ -332,13 +342,12 @@ func (a ACM) resolveByResourceIDTag(ctx context.Context, arns []string, want str
 			if errors.As(err, &rnfe) {
 				continue
 			}
-			return nil, nil, errors.Wrapf(err, "failed to read tags for certificate %v", arn)
+			return certificatePick{}, errors.Wrapf(err, "failed to read tags for certificate %v", arn)
 		}
 		candidates = append(candidates, certCandidate{arn: arn, tags: tags})
 	}
 
-	picked, tagged := pickCertificateByResourceID(candidates, want)
-	return picked, tagged, nil
+	return pickCertificateByResourceID(candidates, want), nil
 }
 
 // certCandidate pairs a certificate ARN with its tags for disambiguation.
@@ -347,20 +356,33 @@ type certCandidate struct {
 	tags map[string]string
 }
 
-// pickCertificateByResourceID returns the single candidate whose buildit:resource-id tag
-// equals want, plus the list of ALL matching ARNs so the caller can reject a still-
-// ambiguous result. Pure — no AWS calls — so the selection policy is unit-testable.
-func pickCertificateByResourceID(candidates []certCandidate, want string) (*string, []string) {
-	var tagged []string
+// certificatePick is the outcome of the buildit:resource-id policy over any number of same-CN certificates:
+// picked is set only when exactly one candidate carries the wanted id; tagged lists every
+// candidate that does; unclaimed lists the candidates carrying no resource-id tag at all —
+// certificates buildit has not stamped, which no resource may assume are its own.
+type certificatePick struct {
+	picked    *string
+	tagged    []string
+	unclaimed []string
+}
+
+// pickCertificateByResourceID applies the resource-id policy to the candidates. The pure
+// half of the lookup, kept free of AWS calls so the policy is unit-testable.
+func pickCertificateByResourceID(candidates []certCandidate, want string) certificatePick {
+	var pick certificatePick
 	for _, c := range candidates {
-		if c.tags[util.BuilditResourceIDTagKey] == want {
-			tagged = append(tagged, c.arn)
+		id, ok := c.tags[util.BuilditResourceIDTagKey]
+		switch {
+		case !ok:
+			pick.unclaimed = append(pick.unclaimed, c.arn)
+		case id == want:
+			pick.tagged = append(pick.tagged, c.arn)
 		}
 	}
-	if len(tagged) == 1 {
-		return &tagged[0], tagged
+	if len(pick.tagged) == 1 {
+		pick.picked = &pick.tagged[0]
 	}
-	return nil, tagged
+	return pick
 }
 
 // GetResourceTags returns the tags for the ACM resource or error
