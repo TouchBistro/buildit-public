@@ -802,7 +802,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 
 	i.graph = graph
 	// apply security group
-	if err := i.overrideSecurityGroups(ctx, validationErrs); err != nil {
+	if err := i.overrideSecurityGroups(ctx, addErr); err != nil {
 		return err
 	}
 
@@ -1013,8 +1013,11 @@ func (i *InternalConfig) overrideProviders() error {
 	return nil
 }
 
-// overrideSecurityGroups applies override config to security groups
-func (i *InternalConfig) overrideSecurityGroups(ctx context.Context, validationErrs []error) error {
+// overrideSecurityGroups applies the override config's security-group section to
+// the graph. Validation failures are reported through addErr, the same
+// accumulator Generate uses for every other resource, so an override-injected
+// resource that fails Validate fails the run like any other (DEVOPS-8901).
+func (i *InternalConfig) overrideSecurityGroups(ctx context.Context, addErr func(error)) error {
 	ovverridPrefix := color.Yellow("** Override **")
 
 	if i._override != nil {
@@ -1022,17 +1025,24 @@ func (i *InternalConfig) overrideSecurityGroups(ctx context.Context, validationE
 
 		// loop through
 		for securityGroupPattern, o_sg := range override.Resources.SecurityGroup {
+			// Checked here rather than per branch: a merge would strip a reserved key
+			// silently, and a new resource must be checked before Normalize adds ours.
+			addErr(checkReservedTags("security-group", securityGroupPattern, o_sg.Tags))
+
 			switch securityGroupPattern {
 
 			// matches everything
 			case "*":
-				for _, m_vertex := range i.graph.vertices {
+				for key, m_vertex := range i.graph.vertices {
 					if m_sg, ok := m_vertex.resource.(resource.SecurityGroup); ok { // if vertex is a security group
 						// log.Infof(ovverridPrefix+" merging security-group configuration for %q, matching ALL `*`", m_sg.Key())
 						log.WithFields(log.Fields{color.Yellow("pattern"): "*", color.Yellow("matched"): m_sg.Key()}).Warnf("overriding security group configuration")
 						if err := m_sg.Merge(o_sg); err != nil {
 							return err
 						}
+						// m_sg is a copy; without these two writes the merge is a no-op.
+						m_vertex.resource = m_sg
+						i.graph.depdendencies[key] = m_sg.DependsOn
 					}
 				}
 
@@ -1053,6 +1063,9 @@ func (i *InternalConfig) overrideSecurityGroups(ctx context.Context, validationE
 							return err
 						}
 						ver.resource = existing_sg // re-assign it back to the same vertex
+						// Edges are built from this snapshot after overrides run, so a
+						// dependsOn merged in above is lost unless it is refreshed here.
+						i.graph.depdendencies[key] = existing_sg.DependsOn
 						matched = true
 					}
 				}
@@ -1063,7 +1076,7 @@ func (i *InternalConfig) overrideSecurityGroups(ctx context.Context, validationE
 						// TODO this is a terrible repetition of code.
 						// need to do something with this pattern (e.g.
 						// introduce & implement a ConfigurableResource interface???)
-						log.WithFields(log.Fields{color.Yellow("pattern"): securityGroupPattern}).Warnf("adding new security griuop configuration from overrides")
+						log.WithFields(log.Fields{color.Yellow("pattern"): securityGroupPattern}).Warnf("adding new security group configuration from overrides")
 
 						ePr, eId, err := i.getEffectiveProviderAndId(securityGroupPattern, o_sg.Context)
 						if err != nil {
@@ -1072,15 +1085,11 @@ func (i *InternalConfig) overrideSecurityGroups(ctx context.Context, validationE
 
 						o_sg.Name = *eId
 						o_sg.Context.ProviderName = *ePr
-						// No reserved-tag check here: this method takes validationErrs by
-						// value, so anything appended is discarded (DEVOPS-8901). The
-						// override's globalTags are still checked up front, and
-						// ResourceTags.Merge strips reserved keys regardless, so a bad key
-						// cannot reach AWS — it just goes unreported.
 						o_sg.GlobalTags = i.tagsFor(*eId)
 						o_sg.Normalize(ctx)
+						addErr(checkBuilditTagsApplied("security-group", securityGroupPattern, o_sg.Tags))
 						if err := o_sg.Validate(ctx); err != nil {
-							validationErrs = append(validationErrs, err)
+							addErr(err)
 							continue
 						}
 						i.graph.AddVertex(o_sg, o_sg.DependsOn)
