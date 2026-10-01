@@ -68,6 +68,12 @@ The resource definitions (`resources` section) declare the AWS resources to be p
 
 For more details on supported resource types & their configuration options see [Supported AWS Resource Types](./resources/resources.md)
 
+Resource names must be unique within a provider **across all resource types**. buildit identifies a resource by `provider::name` only, so an `s3-bucket` and an `sqs-queue` both named `example-thing` under the same provider are the same key. Declaring such a pair (in one file or across several `--path` files) fails validation before anything is planned:
+
+```
+resource key main::example-thing is declared twice: s3-bucket "example-thing" and sqs-queue "example-thing" share it; resource names must be unique within a provider across all resource types
+```
+
 ```yaml 
 ---
 

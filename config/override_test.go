@@ -81,10 +81,11 @@ func TestOverrideSecurityGroupsAddsValidResource(t *testing.T) {
 	assert.Equal(t, "example-sg", sg.Tags[util.BuilditResourceIDTagKey])
 }
 
-func graphWithSecurityGroup(name string) *Graph {
+func graphWithSecurityGroup(t *testing.T, name string) *Graph {
+	t.Helper()
 	g := &Graph{}
 	sg := resource.SecurityGroup{Name: name, VPCName: "example-vpc", Description: "original"}
-	g.AddVertex(sg, sg.DependsOn)
+	require.NoError(t, g.AddVertex(sg, sg.DependsOn))
 	return g
 }
 
@@ -97,7 +98,7 @@ func overrideOnGraph(g *Graph, pattern string, sg resource.SecurityGroup) Intern
 // The '*' branch type-asserts the vertex resource into a local copy. Merging into
 // that copy without writing it back made every wildcard override a silent no-op.
 func TestOverrideSecurityGroupsWildcardWritesBack(t *testing.T) {
-	g := graphWithSecurityGroup("example-sg")
+	g := graphWithSecurityGroup(t, "example-sg")
 	i := overrideOnGraph(g, "*", resource.SecurityGroup{Description: "overridden"})
 	addErr, errs := collectErrs()
 
@@ -118,7 +119,7 @@ func TestOverrideSecurityGroupsMergedDependsOnBecomesEdge(t *testing.T) {
 
 	for _, pattern := range []string{"*", "example-sg", "^main::example-.*$"} {
 		t.Run(pattern, func(t *testing.T) {
-			g := graphWithSecurityGroup("example-sg")
+			g := graphWithSecurityGroup(t, "example-sg")
 			i := overrideOnGraph(g, pattern, resource.SecurityGroup{DependsOn: []resource.Key{dep}})
 			addErr, errs := collectErrs()
 
@@ -136,7 +137,7 @@ func TestOverrideSecurityGroupsMergedDependsOnBecomesEdge(t *testing.T) {
 // A reserved tag on an override that merges into an existing group used to be
 // stripped by ResourceTags.Merge without a word. Every other path reports it.
 func TestOverrideSecurityGroupsReportsReservedTagsOnMerge(t *testing.T) {
-	g := graphWithSecurityGroup("example-sg")
+	g := graphWithSecurityGroup(t, "example-sg")
 	i := overrideOnGraph(g, "example-sg", resource.SecurityGroup{
 		Tags: map[string]string{util.BuilditTagPrefix + "owner": "example-team"},
 	})
@@ -146,4 +147,22 @@ func TestOverrideSecurityGroupsReportsReservedTagsOnMerge(t *testing.T) {
 
 	require.Len(t, *errs, 1)
 	assert.Contains(t, (*errs)[0].Error(), util.BuilditTagPrefix+"owner")
+}
+
+// An override that appends a new group under a name another resource already
+// holds is a key collision (DEVOPS-8902). It is reported through the accumulator
+// like the other validation failures, not returned as a hard error.
+func TestOverrideSecurityGroupsReportsKeyCollision(t *testing.T) {
+	g := &Graph{}
+	require.NoError(t, g.AddVertex(resource.S3Bucket{Bucket: "example-thing"}, nil))
+	i := overrideOnGraph(g, "example-thing", resource.SecurityGroup{VPCName: "example-vpc"})
+	addErr, errs := collectErrs()
+
+	require.NoError(t, i.overrideSecurityGroups(context.Background(), addErr))
+
+	require.Len(t, *errs, 1)
+	assert.Contains(t, (*errs)[0].Error(), `s3-bucket "example-thing" and security-group "example-thing"`)
+	got, err := g.GetVertex(resource.NewKey("main", "example-thing"))
+	require.NoError(t, err)
+	assert.IsType(t, resource.S3Bucket{}, got, "the existing resource must not be overwritten")
 }

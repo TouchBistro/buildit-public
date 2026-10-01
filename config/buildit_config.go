@@ -1,6 +1,9 @@
 package config
 
 import (
+	"reflect"
+	"strings"
+
 	"github.com/TouchBistro/buildit/client"
 	"github.com/TouchBistro/buildit/resource"
 	"github.com/TouchBistro/buildit/resource/firehose"
@@ -52,4 +55,32 @@ type builditConfig struct {
 	// Source is the file this config was read from, so validation can tell the user
 	// which of several merged files to go and fix.
 	Source string `yaml:"-"`
+}
+
+// resourceTypeName returns the `resources:` section name a resource is declared
+// under, e.g. "s3-bucket" for a resource.S3Bucket, so user-facing messages can
+// name the type the way it is written in buildit.yml. It is read from the yaml
+// tags of resourcesConfig, so a new resource type is covered as soon as it is
+// added there. Falls back to the Go type name for anything not declared in
+// resourcesConfig.
+func resourceTypeName(res resource.Resource) string {
+	t := reflect.TypeOf(res)
+	if t == nil {
+		return "<nil>"
+	}
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+
+	cfg := reflect.TypeOf(resourcesConfig{})
+	for i := 0; i < cfg.NumField(); i++ {
+		f := cfg.Field(i)
+		if f.Type.Kind() != reflect.Map || f.Type.Elem() != t {
+			continue
+		}
+		if name, _, _ := strings.Cut(f.Tag.Get("yaml"), ","); name != "" {
+			return name
+		}
+	}
+	return t.Name()
 }

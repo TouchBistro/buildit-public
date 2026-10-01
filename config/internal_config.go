@@ -140,7 +140,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.Certificate {
@@ -159,7 +159,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.CloudfrontDistribution {
@@ -178,7 +178,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.CloudfrontVpcOrigin {
@@ -197,7 +197,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.CloudfrontFunction {
@@ -216,7 +216,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.CWLogGroup {
@@ -235,7 +235,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.CWMetricAlarm {
@@ -254,7 +254,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.CWSubscriptionFilter {
@@ -273,7 +273,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.DynamoDB {
@@ -292,7 +292,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.ECSService {
@@ -311,7 +311,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.EFSFileSystem {
@@ -333,7 +333,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.EventBridgeApiDestination {
@@ -353,7 +353,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.EventBridgeRule {
@@ -375,7 +375,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.EventBridgeConnection {
@@ -398,7 +398,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.FirehoseDeliveryStream {
@@ -417,7 +417,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.IAMPolicy {
@@ -437,7 +437,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.IAMRole {
@@ -457,7 +457,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.LambdaFn {
@@ -477,7 +477,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.LambdaLayer {
@@ -500,7 +500,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.LBTargetGroup {
@@ -519,7 +519,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.LoadBalancer {
@@ -538,7 +538,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.MSKConnector {
@@ -557,7 +557,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.MSKPlugin {
@@ -576,7 +576,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.MSKWorkerConfiguration {
@@ -595,7 +595,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.Route53Record {
@@ -633,7 +633,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.S3Bucket {
@@ -652,7 +652,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.SDService {
@@ -671,7 +671,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.SecurityGroup {
@@ -691,7 +691,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.SQSQueue {
@@ -719,7 +719,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.SNSSubscription {
@@ -739,7 +739,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.StandaloneTask {
@@ -758,7 +758,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.StateMachine {
@@ -777,7 +777,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 
 		for n, r := range c.Resources.TaskDef {
@@ -796,7 +796,7 @@ func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			graph.AddVertex(r, r.DependsOn)
+			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 	}
 
@@ -1092,7 +1092,7 @@ func (i *InternalConfig) overrideSecurityGroups(ctx context.Context, addErr func
 							addErr(err)
 							continue
 						}
-						i.graph.AddVertex(o_sg, o_sg.DependsOn)
+						addErr(i.graph.AddVertex(o_sg, o_sg.DependsOn))
 					} else {
 						log.Debugf(ovverridPrefix+" no match for security-group pattern %q, and this is not an allowed resource name, skipping", securityGroupPattern)
 					}

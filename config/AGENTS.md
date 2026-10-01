@@ -19,6 +19,12 @@ This package manages the loading, parsing, and validation of `buildit` configura
 ## Guidelines
 
 - **Fail Fast**: Validate configuration early and return clear, descriptive error messages.
+- **One key per resource**: `Graph` vertices are keyed on `resource.Key()` (`provider::name`, no type).
+  `AddVertex` returns an error on a duplicate key rather than overwriting, because an overwritten
+  vertex silently drops out of plan/apply/destroy (DEVOPS-8902). `Generate` collects that error
+  with the other validation errors so every collision is reported in one run. Use
+  `resourceTypeName` (yaml tag of `resourcesConfig`) when a message needs to name a resource type
+  the way the user wrote it.
 - **Interpolation**: Support `${VAR_NAME}` syntax for variable substitution.
 - **Provider Management**: Handle multiple AWS provider configurations (regions, profiles, roles).
 - **Format Support**: Support multiple config file formats if necessary, but prioritize YAML.

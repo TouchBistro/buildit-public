@@ -86,8 +86,13 @@ func (g *Graph) Cycle() []resource.Key {
 // depedencies.
 //
 // A dependency in graph terms is all other verticies that have an outward
-// edge into this vertex
-func (g *Graph) AddVertex(res resource.Resource, deps []resource.Key) {
+// edge into this vertex.
+//
+// Vertices are keyed on resource.Key(), which is provider::name and carries no
+// resource type. A second resource with the same key, of any type, would
+// silently replace the first and drop out of every plan, apply and destroy, so
+// it is rejected here instead.
+func (g *Graph) AddVertex(res resource.Resource, deps []resource.Key) error {
 	// Lazy initialize map when first vertex is added
 	// This way zero value graphs can be used
 	if g.vertices == nil {
@@ -98,15 +103,24 @@ func (g *Graph) AddVertex(res resource.Resource, deps []resource.Key) {
 		g.depdendencies = make(map[resource.Key][]resource.Key)
 	}
 
+	key := res.Key()
+	if existing, ok := g.vertices[key]; ok {
+		return errors.Errorf(
+			"resource key %v is declared twice: %s %q and %s %q share it; resource names must be unique within a provider across all resource types",
+			key, resourceTypeName(existing.resource), existing.resource.Identifier(),
+			resourceTypeName(res), res.Identifier())
+	}
+
 	log.WithFields(log.Fields{
-		"key":  res.Key(),
+		"key":  key,
 		"type": reflect.TypeOf(res).String(),
 	}).Debug(color.Magenta("adding vertex"))
 
-	g.vertices[res.Key()] = &Vertex{
+	g.vertices[key] = &Vertex{
 		resource: res,
 	}
-	g.depdendencies[res.Key()] = deps
+	g.depdendencies[key] = deps
+	return nil
 }
 
 // GetVertex returns the reosurces for the named vertex from the graph
