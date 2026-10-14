@@ -23,8 +23,17 @@ This package manages the loading, parsing, and validation of `buildit` configura
   `AddVertex` returns an error on a duplicate key rather than overwriting, because an overwritten
   vertex silently drops out of plan/apply/destroy (DEVOPS-8902). `Generate` collects that error
   with the other validation errors so every collision is reported in one run. Use
-  `resourceTypeName` (yaml tag of `resourcesConfig`) when a message needs to name a resource type
+  `resourceTypeName` (yaml tag of `ResourceSet`) when a message needs to name a resource type
   the way the user wrote it.
+- **Two entry points, one pipeline**: `Parse` reads files; `NewInternalConfig(rs ResourceSet,
+  providers, globalTags)` takes the same values built in Go (DEVOPS-8933, libbuildit consumers
+  such as wafer). Both produce an `InternalConfig` that `Generate` finishes in three steps:
+  `mergeConfigs` (tags, audit tag, providers; no AWS), `client.InitAwsProviders` (STS), then
+  `buildGraph` (provider/name resolution, tagsFor, Normalize, Validate, overrides, edges). Keep
+  that split: new config-shape checks go in `mergeConfigs` so they fail before any AWS call, and
+  `config/resource_set_test.go` runs `mergeConfigs` + `buildGraph` to assert the wired graph
+  without credentials. `ResourceSet` is exported and its yaml tags are the `resources:` section
+  names, so renaming a field or tag changes both the YAML format and the Go API.
 - **Interpolation**: Support `${VAR_NAME}` syntax for variable substitution.
 - **Provider Management**: Handle multiple AWS provider configurations (regions, profiles, roles).
 - **Format Support**: Support multiple config file formats if necessary, but prioritize YAML.

@@ -13,16 +13,16 @@ import (
 )
 
 // TestResourceProviderFieldIsParsed guards the `provider` field wiring for every
-// resource type in resourcesConfig: BaseResource must be embedded with yaml:",inline",
+// resource type in ResourceSet: BaseResource must be embedded with yaml:",inline",
 // or yaml.v2 silently drops the key (unlike encoding/json, it does not auto-inline
 // embedded structs) and the resource silently falls back to the main provider.
 func TestResourceProviderFieldIsParsed(t *testing.T) {
-	rcType := reflect.TypeFor[resourcesConfig]()
+	rcType := reflect.TypeFor[ResourceSet]()
 
 	for i := range rcType.NumField() {
 		field := rcType.Field(i)
 		tag := field.Tag.Get("yaml")
-		require.NotEmpty(t, tag, "resourcesConfig field %q has no yaml tag", field.Name)
+		require.NotEmpty(t, tag, "ResourceSet field %q has no yaml tag", field.Name)
 
 		t.Run(tag, func(t *testing.T) {
 			doc := fmt.Sprintf("resources:\n  %s:\n    test-item:\n      provider: custom-provider\n", tag)

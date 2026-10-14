@@ -53,7 +53,7 @@ func (r ResourceName) Identifier() string {
 }
 ```
 
-**`BaseResource` must be embedded with `yaml:",inline"`.** yaml.v2 does not auto-inline embedded structs (unlike `encoding/json`), so without the tag the resource-level `provider` field is silently dropped and the resource falls back to the main provider. `TestResourceProviderFieldIsParsed` in `config/provider_field_test.go` enforces this for every resource type registered in `resourcesConfig`.
+**`BaseResource` must be embedded with `yaml:",inline"`.** yaml.v2 does not auto-inline embedded structs (unlike `encoding/json`), so without the tag the resource-level `provider` field is silently dropped and the resource falls back to the main provider. `TestResourceProviderFieldIsParsed` in `config/provider_field_test.go` enforces this for every resource type registered in `ResourceSet`.
 
 ### Apply Method Pattern
 

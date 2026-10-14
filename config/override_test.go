@@ -13,7 +13,7 @@ import (
 func overrideWithSecurityGroup(name string, sg resource.SecurityGroup) InternalConfig {
 	return InternalConfig{
 		graph: &Graph{},
-		_override: &builditConfig{Resources: resourcesConfig{
+		_override: &builditConfig{Resources: ResourceSet{
 			SecurityGroup: map[string]resource.SecurityGroup{name: sg},
 		}},
 	}

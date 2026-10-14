@@ -10,7 +10,13 @@ import (
 	"github.com/TouchBistro/buildit/resource/lambda"
 )
 
-type resourcesConfig struct {
+// ResourceSet is the `resources:` section of a buildit config: every resource type buildit
+// manages, keyed by the name the user declared it under (optionally `provider::name`).
+//
+// It is exported so a Go consumer can build the same object YAML parsing produces and hand
+// it to NewInternalConfig, without writing a file (DEVOPS-8933). The yaml tags are the
+// section names in buildit.yml and must stay in step with docs/resources/.
+type ResourceSet struct {
 	// comparable resources
 	BedrockApplicationInferenceProfile map[string]resource.BedrockApplicationInferenceProfile `yaml:"bedrock-application-inference-profile"`
 	Certificate                        map[string]resource.ACMCertificate                     `yaml:"certificate"`
@@ -49,7 +55,7 @@ type resourcesConfig struct {
 
 type builditConfig struct {
 	Providers  map[string]*client.AwsProvider `yaml:"providers"`
-	Resources  resourcesConfig                `yaml:"resources"`
+	Resources  ResourceSet                    `yaml:"resources"`
 	GlobalTags map[string]string              `yaml:"globalTags"`
 	SHA        string                         `yaml:"-"`
 	// Source is the file this config was read from, so validation can tell the user
@@ -60,9 +66,9 @@ type builditConfig struct {
 // resourceTypeName returns the `resources:` section name a resource is declared
 // under, e.g. "s3-bucket" for a resource.S3Bucket, so user-facing messages can
 // name the type the way it is written in buildit.yml. It is read from the yaml
-// tags of resourcesConfig, so a new resource type is covered as soon as it is
+// tags of ResourceSet, so a new resource type is covered as soon as it is
 // added there. Falls back to the Go type name for anything not declared in
-// resourcesConfig.
+// ResourceSet.
 func resourceTypeName(res resource.Resource) string {
 	t := reflect.TypeOf(res)
 	if t == nil {
@@ -72,7 +78,7 @@ func resourceTypeName(res resource.Resource) string {
 		t = t.Elem()
 	}
 
-	cfg := reflect.TypeOf(resourcesConfig{})
+	cfg := reflect.TypeFor[ResourceSet]()
 	for i := 0; i < cfg.NumField(); i++ {
 		f := cfg.Field(i)
 		if f.Type.Kind() != reflect.Map || f.Type.Elem() != t {

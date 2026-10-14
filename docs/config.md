@@ -93,3 +93,31 @@ resources:
         - value: 0.0.0.0/0
           description: allow http:80 from the world
 ```
+## Building a config from Go
+
+A program that embeds **buildit** as a library does not have to write a `buildit.yml` to disk.
+`config.ResourceSet` is the Go form of the `resources:` section, with one map per resource type
+keyed the same way as the YAML (`name` or `provider::name`), and `config.NewInternalConfig` takes
+it together with the `providers:` and `globalTags:` values:
+
+```go
+rs := config.ResourceSet{
+    CWLogGroup: map[string]resource.CWLogGroup{
+        "example-logs": {Retention: aws.Int32(30)},
+    },
+}
+providers := map[string]*client.AwsProvider{
+    "example": {ProviderType: client.ProviderTypeRole, AccountId: "123456789012", RoleName: "example-role"},
+}
+
+ic := config.NewInternalConfig(rs, providers, map[string]string{"team": "example-team"})
+if err := ic.Generate(ctx, config.RootOptions{NoAuditTags: true}); err != nil {
+    return err
+}
+graph := ic.Graph() // the same wired graph `buildit plan` would build from the YAML
+```
+
+`Generate` behaves exactly as it does for parsed files: it initializes the providers, resolves each
+resource's provider and name, applies global and `buildit:` tags, normalizes, validates, and builds
+the dependency edges. There is no file content to checksum, so the `audit` tag is only meaningful if
+you set it in `globalTags` yourself; otherwise pass `NoAuditTags`.
