@@ -13,6 +13,36 @@ Apply(ctx context.Context) error     // Create/update resource
 Destroy(ctx context.Context) error   // Delete resource
 ```
 
+### Lifecycle Interfaces: `NormalizableResource` and `ValidatableResource`
+
+Every top-level resource type (one registered in `config`'s `resourcesConfig`) also implements
+both lifecycle interfaces from `resource/resource_lifecycle.go`:
+
+```go
+Normalize(ctx context.Context)       // Prepare the definition: defaults, sanitizing, tag merge, name resolution
+Validate(ctx context.Context) error  // Check business rules; return a *ValidationError listing every failure
+```
+
+**Receiver rule.** `Normalize` mutates the definition, so it is the one lifecycle method declared
+on a **pointer** receiver (`func (r *T) Normalize`). `Key`, `Identifier`, `Validate`, `Compare`,
+`Apply` and `Destroy` are declared on **value** receivers. Consequences:
+
+- `*T` satisfies every resource interface; `T` satisfies all of them except `NormalizableResource`.
+  Code that drives the lifecycle generically must hold a `*T` until `Normalize` has run.
+- Each type's file set ends with compile-time assertions, `var _ NormalizableResource = (*T)(nil)`
+  and `var _ ValidatableResource = (*T)(nil)` (`resource_lifecycle.go` for this package,
+  `lifecycle.go` in `lambda/` and `firehose/`). A new top-level type adds its pair; a `Normalize`
+  written on a value receiver, or a `Validate` with the wrong signature, then fails the build
+  instead of silently doing nothing at config load.
+- An externally defined resource type (one living in another module, as wafer's will) joins the
+  graph on the same terms: implement the methods with these receivers and `Graph.AddVertex` takes
+  it. `config/external_resource_test.go` is the reference example.
+
+Nested sub-resources that a parent manages (`LBListener`, `LBRule`, `EventBridgeTarget`,
+`ApplicationAutoScaling`, `EFSAccessPoint`, `EFSMountTarget`) take an extra argument in their
+lifecycle methods and are not graph vertices. They do not implement these interfaces and must not
+be reshaped to.
+
 ### Extended Interface: `ComparableResource`
 
 Resources that need diff detection implement `ComparableResource`:
