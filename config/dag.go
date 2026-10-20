@@ -245,73 +245,15 @@ func (g *Graph) Plan(ctx context.Context) error {
 	return g.PlanTargets(ctx, nil)
 }
 
-// PlanTargets calls Compare on all ComaprableResource targets & logs the plan
-// based on the diffs found with existing resources
+// PlanTargets logs the plan for a human reader, one resource at a time as each
+// Compare returns, so a long plan shows progress rather than printing at the
+// end. Callers that need the plan as data should use PlanResult.
 func (g *Graph) PlanTargets(ctx context.Context, targets []resource.Key) error {
-
-	sorted, err := g.toposort()
-	if err != nil {
-		return errors.Wrap(err, "failed to toposort resource graph")
+	var r planRenderer
+	if err := g.planEach(ctx, targets, r.entry); err != nil {
+		return err
 	}
-
-	skipped := 0
-	for _, n := range sorted {
-		v := g.vertices[n]
-		rtype := reflect.TypeOf(v.resource)
-		// only plan if no targets supplied, or the name of the target matches the supplied list...
-		if len(targets) > 0 && !util.ContainsComparable(targets, n) {
-			skipped++ // count skipped resources
-			log.WithFields(log.Fields{
-				color.Yellow("Resource"): n,
-				color.Yellow("Type"):     rtype.String(),
-			}).Debug(color.Yellow("skipping resource not targetted"))
-			continue
-		}
-
-		// only plan for comparable resource; others not suppported
-		if cr, ok := v.resource.(resource.ComparableResource); ok {
-			diff, err := cr.Compare(ctx)
-			if err != nil {
-				return errors.Wrapf(err, "failed comparing resource %s", n)
-			}
-
-			if diff != nil && diff.AWSResource() == nil {
-				// there's a diff, but no existing resource exists; this means the resource will
-				// be provisioned;
-				log.WithFields(
-					log.Fields{color.Green("Resource"): n, color.Green("Type"): rtype.String()},
-				).Info(color.Green("new resource will be provisioned"))
-			} else if diff != nil && len(diff.Differences()) > 0 {
-				// there's a diff, and there are differences found between this & existing aws
-				// resource, display the diffs
-				// log.Info(color.Yellow("-+---------+-"))
-				log.WithFields(
-					log.Fields{color.Yellow("Resource"): n, color.Yellow("Type"): rtype.String()},
-				).Info(color.Yellow("resource will be updated"))
-				log.Infof("-----------------------------------")
-				log.Infof("\t%v", n)
-				log.Infof("-----------------------------------")
-				for n, str := range diff.Differences() {
-					//log.WithFields(log.Fields{color.Yellow("Resource"): n, color.Yellow("Type"): rtype.String()})
-
-					log.Infof("\t\t|->Diff %v: %v", n, color.Yellow(str))
-				}
-				log.Info(color.Yellow(""))
-			} else if diff == nil {
-				// no diff, this & existing resource is identical
-				log.WithFields(log.Fields{color.Blue("Resource"): n, color.Blue("Type"): rtype.String()}).Info(color.Blue("resource exists, no diff found"))
-			}
-		} else {
-			log.WithFields(log.Fields{"Resource": n}).Error("Plan not supported for this resource type")
-			continue
-		}
-	}
-
-	// if files skipped & not logged due to logger level, inform the user
-	if skipped > 0 && log.GetLevel() < log.DebugLevel {
-		log.Warnf("%v resources were skipped, use log level DEBUG or higher to view list", skipped)
-	}
-
+	r.finish()
 	return nil
 }
 

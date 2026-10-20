@@ -1,0 +1,11 @@
+level=info msg="new resource will be provisioned" Resource="main::example-create" Type=config.fakeComparable
+level=info msg="resource will be updated" Resource="main::example-update" Type=config.fakeComparable
+level=info msg=-----------------------------------
+level=info msg="\tmain::example-update"
+level=info msg=-----------------------------------
+level=info msg="\t\t|->Diff 0: name: old-name != new-name"
+level=info msg="\t\t|->Diff 1: port: 80 != 443"
+level=info
+level=info msg="resource exists, no diff found" Resource="main::example-same" Type=config.fakeComparable
+level=error msg="Plan not supported for this resource type" Resource="main::example-unsupported"
+level=warning msg="1 resources were skipped, use log level DEBUG or higher to view list"

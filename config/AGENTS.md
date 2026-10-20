@@ -34,6 +34,16 @@ This package manages the loading, parsing, and validation of `buildit` configura
   `config/resource_set_test.go` runs `mergeConfigs` + `buildGraph` to assert the wired graph
   without credentials. `ResourceSet` is exported and its yaml tags are the `resources:` section
   names, so renaming a field or tag changes both the YAML format and the Go API.
+- **Plan data vs rendering**: `plan.go` splits planning in two. `Graph.PlanResult` walks the graph,
+  calls `Compare`, and returns `[]PlanEntry` with no logging; `planRenderer` turns entries into the
+  logrus output users see. Both sit on `planEach`, which hands over each entry as soon as its
+  `Compare` returns: `PlanTargets` renders progressively (a long plan must show progress, not
+  print in one burst at the end), `PlanResult` collects. Keep it that way
+  (DEVOPS-8928): libbuildit consumers such as wafer render plans with their own field set, and a
+  `--json` plan needs the entries as values. New plan outcomes are a `PlanAction` plus a renderer
+  case, never a `log.*` call inside `PlanResult`. `config/testdata/plan_*.golden` pin the exact
+  output; regenerate with `go test ./config -run TestPlanTargetsOutput -update` only when the
+  output is meant to change.
 - **Interpolation**: Support `${VAR_NAME}` syntax for variable substitution.
 - **Provider Management**: Handle multiple AWS provider configurations (regions, profiles, roles).
 - **Format Support**: Support multiple config file formats if necessary, but prioritize YAML.
