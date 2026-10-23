@@ -46,6 +46,11 @@ type PlanEntry struct {
 	Differences []string
 	// AWSResource is ResourceDiff.AWSResource(); nil unless Action is PlanUpdate.
 	AWSResource any
+	// Changes is DetailedResourceDiff.Changes() when the diff implements that
+	// interface and Action is PlanUpdate; nil for every other diff. Resources
+	// adopt it one at a time, so a nil here means "no structured detail", not
+	// "no differences": Differences is always populated for an update.
+	Changes []resource.Change
 }
 
 // PlanResult walks the graph in dependency order, calls Compare on every targeted
@@ -96,6 +101,9 @@ func (g *Graph) planEach(ctx context.Context, targets []resource.Key, visit func
 			entry.Action = PlanUpdate
 			entry.Differences = diff.Differences()
 			entry.AWSResource = diff.AWSResource()
+			if detailed, ok := diff.(resource.DetailedResourceDiff); ok {
+				entry.Changes = detailed.Changes()
+			}
 		case diff == nil:
 			entry.Action = PlanNoChange
 		default:

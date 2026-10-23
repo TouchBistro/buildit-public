@@ -3,6 +3,8 @@ package resource
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -116,6 +118,7 @@ func (l LBListener) Destroy(ctx context.Context, rctx Context) error {
 // LoadBalancerListenerDiff represetns diffs between lb listener definition & AWS representation
 type LoadBalancerListenerDiff struct {
 	BaseResourceDiff
+	ChangeSet
 
 	listenerArn        string
 	defaultCertsDiff   bool
@@ -163,6 +166,7 @@ func (l LBListener) equals(ctx context.Context, rctx Context, existing *elbv2typ
 		}
 		if certArn != *existing.Certificates[0].CertificateArn {
 			diffs.Messages = append(diffs.Messages, "default certificate does not match")
+			diffs.AddChange("certificates[0]", *existing.Certificates[0].CertificateArn, certArn)
 			diff = true
 			diffs.defaultCertsDiff = true
 
@@ -209,8 +213,14 @@ func (l LBListener) equals(ctx context.Context, rctx Context, existing *elbv2typ
 			diff = true
 			diffs.Messages = append(diffs.Messages, fmt.Sprintf("%v certificate(s) need to be added", len(nMap)))
 			diffs.certsToAdd = nMap
+			for _, arn := range slices.Sorted(maps.Keys(nMap)) {
+				diffs.AddChange("certificates", "", arn)
+			}
 			diffs.Messages = append(diffs.Messages, fmt.Sprintf("%v certificate(s) need to be removed", len(oMap)))
 			diffs.certsToDelete = oMap
+			for _, arn := range slices.Sorted(maps.Keys(oMap)) {
+				diffs.AddChange("certificates", arn, "")
+			}
 		}
 
 		// ssl policy
@@ -218,6 +228,7 @@ func (l LBListener) equals(ctx context.Context, rctx Context, existing *elbv2typ
 		if diffs.policyDiff {
 			diff = true
 			diffs.Messages = append(diffs.Messages, fmt.Sprintf("ssl policy is different %v -> %v", util.Coalesce(existing.SslPolicy, ""), util.Coalesce(l.SslPolicy, "")))
+			diffs.AddChange("sslPolicy", util.Coalesce(existing.SslPolicy, ""), util.Coalesce(l.SslPolicy, ""))
 		}
 
 	}
@@ -238,6 +249,7 @@ func (l LBListener) equals(ctx context.Context, rctx Context, existing *elbv2typ
 		diff = true
 		diffs.defaultActionsDiff = true
 		diffs.Messages = append(diffs.Messages, "default actions are not the same")
+		diffs.AddChange("ifNoRulesMatch", describeAWSActions(oldDefaultAction), describeActions(newDefaultAction))
 		actions, err := toAwsElbv2Actions(ctx, rctx, l.DefaultRule.Actions)
 		if err != nil {
 			return nil, errors.Wrap(err, "error parsing default rule action")
@@ -279,6 +291,7 @@ func (l LBListener) equals(ctx context.Context, rctx Context, existing *elbv2typ
 			diffs.rulesDiff = true
 			diffs.Messages = append(diffs.Messages,
 				fmt.Sprintf("load balancer rule with priority %v for listener %v is not the same", priorityStr, l.Identifier()))
+			diffs.AddChange(ruleField(i), describeAWSRule(existing), describeRule(l.Rules[i]))
 			l.Rules[i].ListenerName = l.Name
 			l.Rules[i].LoadBalancerName = l.LoadBalancerName
 			diffs.rulesToUpdate = append(diffs.rulesToUpdate, &l.Rules[i]) //add the LBRule to update
@@ -309,6 +322,7 @@ func (l LBListener) equals(ctx context.Context, rctx Context, existing *elbv2typ
 			l.Rules[i].Priority = int32(priority)
 			l.Rules[i].GlobalTags = l.GlobalTags
 			diffs.rulesToAdd = append(diffs.rulesToAdd, l.Rules[i])
+			diffs.AddChange(ruleField(i), "", describeRule(l.Rules[i]))
 		}
 		diffs.Messages = append(diffs.Messages, fmt.Sprintf("%v rules to be added to listener %v", len(diffs.rulesToAdd), l.Name))
 	} else if len(existingRules) > limit { //delete the rest from existing
@@ -326,6 +340,7 @@ func (l LBListener) equals(ctx context.Context, rctx Context, existing *elbv2typ
 				LoadBalancerName: l.LoadBalancerName,
 			}
 			diffs.rulesToDelete = append(diffs.rulesToDelete, temp)
+			diffs.AddChange(ruleField(i), describeAWSRule(existingRules[i]), "")
 		}
 		diffs.Messages = append(diffs.Messages, fmt.Sprintf("%v rules to be deleted from listener %v", len(diffs.rulesToDelete), l.Name))
 	}
@@ -356,6 +371,7 @@ func (l LBListener) equals(ctx context.Context, rctx Context, existing *elbv2typ
 			diffs.Messages = append(diffs.Messages,
 				fmt.Sprintf("tags for load balancer rule with priority %v are not the same", util.Coalesce(existingRules[i].Priority, "?")))
 			diffs.Messages = append(diffs.Messages, TagDiffSummary(ruleTagsByArn[ruleArn], tagDiff)...)
+			diffs.AddChanges(prefixChanges(ruleField(i)+".", TagChanges(ruleTagsByArn[ruleArn], tagDiff))...)
 		}
 	}
 
@@ -369,6 +385,7 @@ func (l LBListener) equals(ctx context.Context, rctx Context, existing *elbv2typ
 		diffs.tagsDiff = true
 		diffs.tagDiff = tagDiff
 		diffs.Messages = append(diffs.Messages, TagDiffSummary(awsTags, diffs.tagDiff)...)
+		diffs.AddChanges(TagChanges(awsTags, tagDiff)...)
 	}
 
 	if !diff {
@@ -376,6 +393,11 @@ func (l LBListener) equals(ctx context.Context, rctx Context, existing *elbv2typ
 	}
 
 	return diffs, nil
+}
+
+// ruleField is the YAML path of the rule at index i in a listener's rules list.
+func ruleField(i int) string {
+	return fmt.Sprintf("rules[%d]", i)
 }
 
 // apply makes a load balancer listener

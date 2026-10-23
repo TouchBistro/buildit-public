@@ -94,7 +94,7 @@ func GetDefaultHTTP(path string) LBHealthCheck {
 
 // LBTargetGroup is a target group resource
 type LBTargetGroup struct {
-	BaseResource `yaml:",inline"`
+	BaseResource        `yaml:",inline"`
 	Name                string            `yaml:"name"`
 	VPCName             string            `yaml:"vpc"`
 	Protocol            string            `yaml:"protocol"`
@@ -340,6 +340,7 @@ func (t LBTargetGroup) Destroy(ctx context.Context) error {
 // TargetGroupDiff type  captures diffs between this & AWS representation
 type TargetGroupDiff struct {
 	BaseResourceDiff
+	ChangeSet
 
 	targetGroupArn string
 
@@ -364,62 +365,16 @@ func (t LBTargetGroup) Compare(ctx context.Context) (ResourceDiff, error) {
 		return nil, err
 	}
 
-	var diff bool
-	diffs := &TargetGroupDiff{}
-
 	if existing == nil {
+		diffs := &TargetGroupDiff{}
 		diffs.Messages = append(diffs.Messages, "target group does not exist")
 		return diffs, nil
 	}
-
-	diffs.Resource = existing
-	diffs.targetGroupArn = *existing.TargetGroupArn
 
 	// vpc
 	vpcID, err := awsw.NewEC2(ctx, t.Context.ProviderName).VpcIdByName(ctx, t.VPCName)
 	if err != nil {
 		return nil, errors.Wrap(err, "error getting vpc id")
-	}
-
-	if *vpcID != *existing.VpcId {
-		diff = true
-		diffs.vpcDiff = true
-		diffs.Messages = append(diffs.Messages, "vpc is not the same")
-	}
-
-	// protocol
-	if t.Protocol != string(existing.Protocol) {
-		diff = true
-		diffs.protocolDiff = true
-		diffs.Messages = append(diffs.Messages, "protocol is not the same")
-	}
-
-	// port
-	if t.Port != *existing.Port {
-		diff = true
-		diffs.portDiff = true
-		diffs.Messages = append(diffs.Messages, "port is not the same")
-	}
-
-	// target type
-	if t.TargetType != string(existing.TargetType) {
-		diff = true
-		diffs.targetTypeDiff = true
-		diffs.Messages = append(diffs.Messages, "target type is not the same")
-	}
-
-	// healtcheck
-	if t.Healthcheck.IntervalSeconds != *existing.HealthCheckIntervalSeconds ||
-		!util.StringPtrEquals(existing.HealthCheckPath, &t.Healthcheck.Path) ||
-		t.Healthcheck.Port != *existing.HealthCheckPort ||
-		t.Healthcheck.Protocol != string(existing.HealthCheckProtocol) ||
-		t.Healthcheck.TimeoutSeconds != *existing.HealthCheckTimeoutSeconds ||
-		t.Healthcheck.HealthyCount != *existing.HealthyThresholdCount ||
-		t.Healthcheck.UnhealthyCount != *existing.UnhealthyThresholdCount ||
-		(existing.Matcher != nil && existing.Matcher.HttpCode != nil && t.Healthcheck.SuccessHTTPCodes != *existing.Matcher.HttpCode) {
-		diff = true
-		diffs.healthcheckDiff = true
-		diffs.Messages = append(diffs.Messages, "healthcheck config is different")
 	}
 
 	// attributes
@@ -428,6 +383,88 @@ func (t LBTargetGroup) Compare(ctx context.Context) (ResourceDiff, error) {
 		return nil, err
 	}
 
+	// tags
+	awsTags, err := awsw.NewELB(ctx, t.Context.ProviderName).GetResourceTags(ctx, *existing.TargetGroupArn)
+	if err != nil {
+		return nil, err
+	}
+
+	// target
+	var existingTargets []string
+	if len(t.Targets) > 0 {
+		existingTargets, err = targetsForTargetGroup(ctx, t.Context, *existing.TargetGroupArn)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to fetch existing targets for the target group")
+		}
+		existingTargets = normalizeTargets(existingTargets)
+	}
+
+	diffs, err := t.compareExisting(ctx, existing, *vpcID, awsAttrs, awsTags, existingTargets)
+	if err != nil {
+		return nil, err
+	}
+	if diffs == nil {
+		return nil, nil
+	}
+
+	return diffs, nil
+}
+
+// compareExisting compares this definition against the fetched AWS state and
+// returns the diff, or nil when nothing differs. It makes no AWS calls: Compare
+// fetches vpcID (the resolved id of t.VPCName), the target group attributes, the
+// tags and, only when the definition declares static targets, the normalized
+// registered targets. ctx is read solely by TagDiffForContext for ignored tag
+// keys. Every message it appends has a matching structured Change.
+func (t LBTargetGroup) compareExisting(ctx context.Context, existing *elbv2types.TargetGroup, vpcID string,
+	awsAttrs []elbv2types.TargetGroupAttribute, awsTags map[string]string, existingTargets []string) (*TargetGroupDiff, error) {
+
+	var diff bool
+	diffs := &TargetGroupDiff{}
+	diffs.Resource = existing
+	diffs.targetGroupArn = *existing.TargetGroupArn
+
+	// vpc
+	if vpcID != *existing.VpcId {
+		diff = true
+		diffs.vpcDiff = true
+		diffs.Messages = append(diffs.Messages, "vpc is not the same")
+		diffs.AddChange("vpc", ChangeValue(existing.VpcId), vpcID)
+	}
+
+	// protocol
+	if t.Protocol != string(existing.Protocol) {
+		diff = true
+		diffs.protocolDiff = true
+		diffs.Messages = append(diffs.Messages, "protocol is not the same")
+		diffs.AddChange("protocol", string(existing.Protocol), t.Protocol)
+	}
+
+	// port
+	if t.Port != *existing.Port {
+		diff = true
+		diffs.portDiff = true
+		diffs.Messages = append(diffs.Messages, "port is not the same")
+		diffs.AddChange("port", ChangeValue(existing.Port), ChangeValue(t.Port))
+	}
+
+	// target type
+	if t.TargetType != string(existing.TargetType) {
+		diff = true
+		diffs.targetTypeDiff = true
+		diffs.Messages = append(diffs.Messages, "target type is not the same")
+		diffs.AddChange("targetType", string(existing.TargetType), t.TargetType)
+	}
+
+	// healtcheck
+	if hcChanges := t.healthcheckChanges(existing); len(hcChanges) > 0 {
+		diff = true
+		diffs.healthcheckDiff = true
+		diffs.Messages = append(diffs.Messages, "healthcheck config is different")
+		diffs.AddChanges(hcChanges...)
+	}
+
+	// attributes
 	for _, attr := range awsAttrs {
 		// stickiness
 		if *attr.Key == "stickiness.enabled" {
@@ -440,6 +477,7 @@ func (t LBTargetGroup) Compare(ctx context.Context) (ResourceDiff, error) {
 				diff = true
 				diffs.attrsDiff = true
 				diffs.Messages = append(diffs.Messages, "attributes `stickiness.enabled` value is not the same")
+				diffs.AddChange("sticky", strconv.FormatBool(stickinessEnabled), strconv.FormatBool(t.Sticky))
 			}
 		}
 		// deregistration delay
@@ -449,6 +487,7 @@ func (t LBTargetGroup) Compare(ctx context.Context) (ResourceDiff, error) {
 				diff = true
 				diffs.attrsDiff = true
 				diffs.Messages = append(diffs.Messages, "attributes `deregistration_delay.timeout_seconds` value is not the same")
+				diffs.AddChange("deregistrationDelay", *attr.Value, strDeRegisgrationDelay)
 			}
 		}
 		// algorithm
@@ -457,37 +496,28 @@ func (t LBTargetGroup) Compare(ctx context.Context) (ResourceDiff, error) {
 				diff = true
 				diffs.attrsDiff = true
 				diffs.Messages = append(diffs.Messages, "attributes `load_balancing.algorithm.type` value is not the same")
+				diffs.AddChange("algorithm", *attr.Value, t.Algorithm)
 			}
 		}
 	}
 
 	// tags
-	awsTags, err := awsw.NewELB(ctx, t.Context.ProviderName).GetResourceTags(ctx, *existing.TargetGroupArn)
-	if err != nil {
-		return nil, err
-	}
 	if tagDiff := TagDiffForContext(ctx, awsTags, t.Tags); tagDiff.HasChanges() {
 		diff = true
 		diffs.tagsDiff = true
 		diffs.tagDiff = tagDiff
 		diffs.Messages = append(diffs.Messages, TagDiffSummary(awsTags, diffs.tagDiff)...)
-
+		diffs.AddChanges(TagChanges(awsTags, tagDiff)...)
 	}
 
 	// target
 	if len(t.Targets) > 0 {
-
-		existingTargets, err := targetsForTargetGroup(ctx, t.Context, *existing.TargetGroupArn)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to fetch existing targets for the target group")
-		}
-		existingTargets = normalizeTargets(existingTargets)
-
 		if util.DiffStringSlices(t.Targets, existingTargets) {
 			diff = true
 			diffs.targetsDiff = true
 			diffs.targets = existingTargets
 			diffs.Messages = append(diffs.Messages, "static targets are not the same")
+			diffs.AddChange("targets", ChangeValue(existingTargets), ChangeValue(t.Targets))
 		}
 	}
 
@@ -496,6 +526,41 @@ func (t LBTargetGroup) Compare(ctx context.Context) (ResourceDiff, error) {
 	}
 
 	return diffs, nil
+}
+
+// healthcheckChanges returns one Change per healthcheck setting that differs
+// between the existing target group and this definition, keyed by the yaml
+// field under `healthcheck`. An empty result means the healthcheck matches.
+func (t LBTargetGroup) healthcheckChanges(existing *elbv2types.TargetGroup) []Change {
+	var changes []Change
+	hc := t.Healthcheck
+
+	if hc.IntervalSeconds != aws.ToInt32(existing.HealthCheckIntervalSeconds) {
+		changes = append(changes, Change{Field: "healthcheck.interval", From: ChangeValue(existing.HealthCheckIntervalSeconds), To: ChangeValue(hc.IntervalSeconds)})
+	}
+	if !util.StringPtrEquals(existing.HealthCheckPath, &hc.Path) {
+		changes = append(changes, Change{Field: "healthcheck.path", From: ChangeValue(existing.HealthCheckPath), To: hc.Path})
+	}
+	if hc.Port != aws.ToString(existing.HealthCheckPort) {
+		changes = append(changes, Change{Field: "healthcheck.port", From: ChangeValue(existing.HealthCheckPort), To: hc.Port})
+	}
+	if hc.Protocol != string(existing.HealthCheckProtocol) {
+		changes = append(changes, Change{Field: "healthcheck.protocol", From: string(existing.HealthCheckProtocol), To: hc.Protocol})
+	}
+	if hc.TimeoutSeconds != aws.ToInt32(existing.HealthCheckTimeoutSeconds) {
+		changes = append(changes, Change{Field: "healthcheck.timeout", From: ChangeValue(existing.HealthCheckTimeoutSeconds), To: ChangeValue(hc.TimeoutSeconds)})
+	}
+	if hc.HealthyCount != aws.ToInt32(existing.HealthyThresholdCount) {
+		changes = append(changes, Change{Field: "healthcheck.healthyCount", From: ChangeValue(existing.HealthyThresholdCount), To: ChangeValue(hc.HealthyCount)})
+	}
+	if hc.UnhealthyCount != aws.ToInt32(existing.UnhealthyThresholdCount) {
+		changes = append(changes, Change{Field: "healthcheck.unhealthyCount", From: ChangeValue(existing.UnhealthyThresholdCount), To: ChangeValue(hc.UnhealthyCount)})
+	}
+	if existing.Matcher != nil && existing.Matcher.HttpCode != nil && hc.SuccessHTTPCodes != *existing.Matcher.HttpCode {
+		changes = append(changes, Change{Field: "healthcheck.successHttpCodes", From: *existing.Matcher.HttpCode, To: hc.SuccessHTTPCodes})
+	}
+
+	return changes
 }
 
 // fetchExisting fetches the existing target group

@@ -657,3 +657,140 @@ func targetGroupNametoArn(ctx context.Context, rctx Context, name string) (strin
 
 	return *out.TargetGroups[0].TargetGroupArn, nil
 }
+
+// describeActions renders a definition's actions for a Change value:
+// "forward example-tg,example-tg-2", "fixed-response 404", "redirect HTTPS:443 HTTP_301".
+// Target group names are the ones the user wrote.
+func describeActions(actions []LBAction) string {
+	parts := make([]string, 0, len(actions))
+	for _, a := range actions {
+		action := a.ActionType
+		switch a.ActionType {
+		case ForwardAction:
+			names := make([]string, 0, len(a.FwTargetGroups))
+			for _, tg := range a.FwTargetGroups {
+				names = append(names, tg.Name)
+			}
+			action = joinNonEmpty(action, strings.Join(names, ","))
+		case FixedResponseAction:
+			action = joinNonEmpty(action, a.FxStatusCode)
+		case RedirectAction:
+			action = joinNonEmpty(action, describeRedirect(a.ReProtocol, a.RePort, a.ReStatusCode))
+		case AuthenticateOidcAction:
+			if a.AuthenticateOidcConfig != nil {
+				action = joinNonEmpty(action, a.AuthenticateOidcConfig.Issuer)
+			}
+		}
+		parts = append(parts, action)
+	}
+	return strings.Join(parts, " ")
+}
+
+// describeAWSActions is describeActions for existing actions. Target groups
+// are left out: AWS only has their ARNs, not the names the user wrote.
+func describeAWSActions(actions []elbv2types.Action) string {
+	parts := make([]string, 0, len(actions))
+	for _, a := range actions {
+		action := string(a.Type)
+		switch {
+		case a.FixedResponseConfig != nil:
+			action = joinNonEmpty(action, aws.ToString(a.FixedResponseConfig.StatusCode))
+		case a.RedirectConfig != nil:
+			r := a.RedirectConfig
+			action = joinNonEmpty(action, describeRedirect(aws.ToString(r.Protocol), aws.ToString(r.Port), string(r.StatusCode)))
+		case a.AuthenticateOidcConfig != nil:
+			action = joinNonEmpty(action, aws.ToString(a.AuthenticateOidcConfig.Issuer))
+		}
+		parts = append(parts, action)
+	}
+	return strings.Join(parts, " ")
+}
+
+// describeRedirect renders a redirect target as "HTTPS:443 HTTP_301", dropping
+// whatever is unset.
+func describeRedirect(protocol, port, status string) string {
+	target := strings.ToUpper(protocol)
+	if port != "" {
+		if target != "" {
+			target += ":"
+		}
+		target += port
+	}
+	return joinNonEmpty(target, status)
+}
+
+// joinNonEmpty joins the non-empty parts with a single space.
+func joinNonEmpty(parts ...string) string {
+	kept := parts[:0:0]
+	for _, p := range parts {
+		if p != "" {
+			kept = append(kept, p)
+		}
+	}
+	return strings.Join(kept, " ")
+}
+
+// describeConditions renders a definition's conditions for a Change value:
+// "host-header is example.com and path-pattern is /api/*".
+func describeConditions(conditions []LBCondition) string {
+	parts := make([]string, 0, len(conditions))
+	for _, c := range conditions {
+		parts = append(parts, describeCondition(c.ConditionType, c.HeaderName, c.Values))
+	}
+	return strings.Join(parts, " and ")
+}
+
+// describeAWSConditions is describeConditions for existing conditions. It
+// reads the values from the same per-type config LBCondition.equals compares.
+func describeAWSConditions(conditions []elbv2types.RuleCondition) string {
+	parts := make([]string, 0, len(conditions))
+	for _, c := range conditions {
+		field := aws.ToString(c.Field)
+		var header string
+		values := c.Values
+		switch field {
+		case PathPatternCondition:
+			if c.PathPatternConfig != nil && len(c.PathPatternConfig.Values) > len(values) {
+				values = c.PathPatternConfig.Values
+			}
+		case HostHeaderCondition:
+			if c.HostHeaderConfig != nil && len(c.HostHeaderConfig.Values) > len(values) {
+				values = c.HostHeaderConfig.Values
+			}
+		case HttpHeaderCondition:
+			if c.HttpHeaderConfig != nil {
+				header = aws.ToString(c.HttpHeaderConfig.HttpHeaderName)
+				values = c.HttpHeaderConfig.Values
+			}
+		case HttpRequestMethodCondition:
+			if c.HttpRequestMethodConfig != nil {
+				values = c.HttpRequestMethodConfig.Values
+			}
+		case HttpSourceIpCondition:
+			if c.SourceIpConfig != nil {
+				values = c.SourceIpConfig.Values
+			}
+		}
+		parts = append(parts, describeCondition(field, header, values))
+	}
+	return strings.Join(parts, " and ")
+}
+
+func describeCondition(conditionType, header string, values []string) string {
+	s := conditionType
+	if header != "" {
+		s += " " + header
+	}
+	return s + " is " + strings.Join(values, ",")
+}
+
+// describeRule renders a definition rule for a Change value:
+// "if host-header is example.com then forward example-tg".
+func describeRule(r LBRule) string {
+	return "if " + describeConditions(r.Conditions) + " then " + describeActions(r.Actions)
+}
+
+// describeAWSRule is describeRule for an existing rule.
+func describeAWSRule(r elbv2types.Rule) string {
+	return "if " + describeAWSConditions(r.Conditions) + " then " + describeAWSActions(r.Actions)
+}

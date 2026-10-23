@@ -32,7 +32,7 @@ const protocolAll = "-1"
 
 // SecurityGroup represents a security group resource
 type SecurityGroup struct {
-	BaseResource `yaml:",inline"`
+	BaseResource  `yaml:",inline"`
 	Description   string              `yaml:"description"`
 	VPCName       string              `yaml:"vpcName"`
 	InboundRules  []SecurityGroupRule `yaml:"inboundRules"`
@@ -276,6 +276,7 @@ func (sg SecurityGroup) Destroy(ctx context.Context) error {
 // SecurityGroupDiff respresnts diffs between security group definition & AWS representation
 type SecurityGroupDiff struct {
 	BaseResourceDiff
+	ChangeSet
 
 	// private diff details
 	ingressDiff   bool
@@ -297,50 +298,91 @@ func (sg SecurityGroup) Compare(ctx context.Context) (ResourceDiff, error) {
 		return nil, errors.Wrapf(err, "error fetching aws resource for %v", sg.Identifier())
 	}
 
-	diffs := &SecurityGroupDiff{}
-
 	if existing == nil {
+		diffs := &SecurityGroupDiff{}
 		diffs.Messages = append(diffs.Messages, "security group does not exist")
 		return diffs, nil
 	}
 
+	sgVpcId, err := awsw.NewEC2(ctx, sg.Context.ProviderName).VpcIdByName(ctx, sg.VPCName)
+	if err != nil {
+		return nil, err
+	}
+
+	var rules securityGroupRuleSets
+	rules.newIngress, err = flattenSecurityGroupRules(ctx, sg.Context, sg.InboundRules)
+	if err != nil {
+		return nil, errors.Wrap(err, "error normalizing new security group rules")
+	}
+	rules.oldIngress, err = flattenAwsIpPermission(existing.IpPermissions)
+	if err != nil {
+		return nil, errors.Wrap(err, "error normalizing existing security group rules")
+	}
+	rules.newEgress, err = flattenSecurityGroupRules(ctx, sg.Context, sg.OutboundRules)
+	if err != nil {
+		return nil, errors.Wrap(err, "error normalizing new egress security group rules")
+	}
+	rules.oldEgress, err = flattenAwsIpPermission(existing.IpPermissionsEgress)
+	if err != nil {
+		return nil, errors.Wrap(err, "error normalizing existing egress security group rules")
+	}
+
+	awsTags, err := awsw.NewEC2(ctx, sg.Context.ProviderName).GetResourceTags(ctx, *existing.GroupId)
+	if err != nil {
+		return nil, err
+	}
+
+	diffs := compareSecurityGroup(ctx, sg, existing, *sgVpcId, rules, awsTags)
+
+	if !diffs.ingressDiff && !diffs.egressDiff && !diffs.tagsDiff {
+		return nil, nil
+	}
+
+	return diffs, nil
+}
+
+// securityGroupRuleSets holds the flattened rules of the definition (new) and of
+// the existing AWS group (old), fetched by Compare ahead of the comparison.
+type securityGroupRuleSets struct {
+	newIngress []sgRule
+	oldIngress []sgRule
+	newEgress  []sgRule
+	oldEgress  []sgRule
+}
+
+// compareSecurityGroup diffs the definition against the fetched AWS values. It
+// is pure so tests can assert messages and Changes without AWS credentials.
+func compareSecurityGroup(ctx context.Context, sg SecurityGroup, existing *ec2types.SecurityGroup, vpcId string, rules securityGroupRuleSets, awsTags map[string]string) *SecurityGroupDiff {
+	diffs := &SecurityGroupDiff{}
 	diffs.Resource = existing
 
 	// comparing description
 
 	if sg.Description != *existing.Description {
 		diffs.Messages = append(diffs.Messages, "security group description is not the same")
+		diffs.AddChange("description", ChangeValue(existing.Description), sg.Description)
 	}
 
 	// comparing vpc id
-	sgVpcId, err := awsw.NewEC2(ctx, sg.Context.ProviderName).VpcIdByName(ctx, sg.VPCName)
-	if err != nil {
-		return nil, err
-	}
 
-	if *sgVpcId != *existing.VpcId {
+	if vpcId != *existing.VpcId {
 		diffs.Messages = append(diffs.Messages, "security group vpcid is different")
+		diffs.AddChange("vpcName", ChangeValue(existing.VpcId), vpcId)
 	}
 
 	// comparing ingress rules
-	new, err := flattenSecurityGroupRules(ctx, sg.Context, sg.InboundRules)
-	if err != nil {
-		return nil, errors.Wrap(err, "error normalizing new security group rules")
-	}
-	old, err := flattenAwsIpPermission(existing.IpPermissions)
-	if err != nil {
-		return nil, errors.Wrap(err, "error normalizing existing security group rules")
-	}
 
-	ingressDiff, ingressAdd, ingressRemove := diffRules(new, old)
+	ingressDiff, ingressAdd, ingressRemove := diffRules(rules.newIngress, rules.oldIngress)
 
 	if ingressDiff {
 		diffs.Messages = append(diffs.Messages, "ingress rules are not the same")
 		for _, r := range ingressAdd {
 			diffs.Messages = append(diffs.Messages, fmt.Sprintf("security group rule to be added port range:%v-%v, protocol:%v, src:%v, type:%v", r.from, r.to, r.protocol, r.src.Value, r.typ))
+			diffs.AddChange("inboundRules", "", r.changeValue())
 		}
 		for _, r := range ingressRemove {
 			diffs.Messages = append(diffs.Messages, fmt.Sprintf("security group rule to be removed port range:%v-%v, protocol:%v, src:%v, type:%v", r.from, r.to, r.protocol, r.src.Value, r.typ))
+			diffs.AddChange("inboundRules", r.changeValue(), "")
 		}
 
 		diffs.ingressDiff = true
@@ -350,41 +392,29 @@ func (sg SecurityGroup) Compare(ctx context.Context) (ResourceDiff, error) {
 
 	// comparing egress rules
 
-	new, err = flattenSecurityGroupRules(ctx, sg.Context, sg.OutboundRules)
-	if err != nil {
-		return nil, errors.Wrap(err, "error normalizing new egress security group rules")
-	}
-	old, err = flattenAwsIpPermission(existing.IpPermissionsEgress)
-	if err != nil {
-		return nil, errors.Wrap(err, "error normalizing existing egress security group rules")
-	}
-
-	egressDiff, egressAdd, egressRemove := diffRules(new, old)
+	egressDiff, egressAdd, egressRemove := diffRules(rules.newEgress, rules.oldEgress)
 	if egressDiff {
 		diffs.Messages = append(diffs.Messages, "egress rules are not the same")
+		for _, r := range egressAdd {
+			diffs.AddChange("outboundRules", "", r.changeValue())
+		}
+		for _, r := range egressRemove {
+			diffs.AddChange("outboundRules", r.changeValue(), "")
+		}
 		diffs.egressDiff = egressDiff
 		diffs.egressAdd = egressAdd
 		diffs.egressRemove = egressRemove
 	}
 
 	// tags
-	var tagsDiff bool
-	awsTags, err := awsw.NewEC2(ctx, sg.Context.ProviderName).GetResourceTags(ctx, *existing.GroupId)
-	if err != nil {
-		return nil, err
-	}
 	if tagDiff := TagDiffForContext(ctx, awsTags, sg.Tags); tagDiff.HasChanges() {
-		tagsDiff = true
 		diffs.tagsDiff = true
 		diffs.tagDiff = tagDiff
 		diffs.Messages = append(diffs.Messages, TagDiffSummary(awsTags, diffs.tagDiff)...)
+		diffs.AddChanges(TagChanges(awsTags, tagDiff)...)
 	}
 
-	if !ingressDiff && !egressDiff && !tagsDiff {
-		return nil, nil
-	}
-
-	return diffs, nil
+	return diffs
 }
 
 // fetchExisting fetches security group if exists
@@ -648,6 +678,13 @@ type sgRule struct {
 	protocol string
 	src      SecurityGroupRuleSource
 	typ      string
+}
+
+// changeValue renders the rule for Change.From/To, e.g. "tcp 443-443 cidr:10.0.0.0/8"
+// or "tcp 5432-5432 sg:sg-0123456789abcdef0". It carries the same fields as the
+// per-rule diff message, in a compact form.
+func (r sgRule) changeValue() string {
+	return fmt.Sprintf("%v %v-%v %v:%v", r.protocol, r.from, r.to, r.typ, r.src.Value)
 }
 
 // this function will flatten sg rules by from/to port/protocol into a 1 rule per sgRule

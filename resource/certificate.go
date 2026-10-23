@@ -224,6 +224,7 @@ func (c ACMCertificate) Destroy(ctx context.Context) error {
 
 type ACMCertificateDiff struct {
 	BaseResourceDiff
+	ChangeSet
 
 	domainDiff     bool
 	sansDiff       bool
@@ -256,6 +257,21 @@ func (c ACMCertificate) Compare(ctx context.Context) (ResourceDiff, error) {
 		return diffs, nil
 	}
 
+	awsTags, err := awsw.NewACM(ctx, c.Context.ProviderName).GetResourceTags(ctx, *existing.CertificateArn)
+	if err != nil {
+		return nil, err
+	}
+
+	if !c.compareExisting(ctx, diffs, existing, awsTags) {
+		return nil, nil
+	}
+
+	return diffs, nil
+}
+
+// compareExisting fills diffs from an already-fetched certificate and its tags and reports
+// whether anything differs. It makes no AWS calls so the comparison is testable on its own.
+func (c ACMCertificate) compareExisting(ctx context.Context, diffs *ACMCertificateDiff, existing *acmtypes.CertificateDetail, awsTags map[string]string) bool {
 	diffs.Resource = existing
 	diff := false
 
@@ -264,6 +280,7 @@ func (c ACMCertificate) Compare(ctx context.Context) (ResourceDiff, error) {
 		diff = true
 		diffs.domainDiff = true
 		diffs.Messages = append(diffs.Messages, "certificate domain name is different")
+		diffs.AddChange("domainName", ChangeValue(existing.DomainName), c.DomainName)
 	}
 
 	// san
@@ -274,6 +291,11 @@ func (c ACMCertificate) Compare(ctx context.Context) (ResourceDiff, error) {
 		diff = true
 		diffs.sansDiff = true
 		diffs.Messages = append(diffs.Messages, "certificate subject alternative name (san) are different")
+		// AWS lists the CN among the SANs; the san field never does, so drop it from the AWS side.
+		awsSANs := slices.DeleteFunc(slices.Clone(existing.SubjectAlternativeNames), func(san string) bool {
+			return san == aws.ToString(existing.DomainName)
+		})
+		diffs.AddChange("san", ChangeValue(awsSANs), ChangeValue(c.SAN))
 	}
 
 	// validation status
@@ -281,25 +303,19 @@ func (c ACMCertificate) Compare(ctx context.Context) (ResourceDiff, error) {
 		diff = true
 		diffs.beingValidated = true
 		diffs.Messages = append(diffs.Messages, "certificate current state is validating")
+		diffs.AddChange("status", string(existing.Status), string(acmtypes.CertificateStatusIssued))
 	}
 
 	// tags
-	awsTags, err := awsw.NewACM(ctx, c.Context.ProviderName).GetResourceTags(ctx, *existing.CertificateArn)
-	if err != nil {
-		return nil, err
-	}
 	if tagDiff := TagDiffForContext(ctx, awsTags, c.Tags); tagDiff.HasChanges() {
 		diff = true
 		diffs.tagsDiff = true
 		diffs.tagDiff = tagDiff
 		diffs.Messages = append(diffs.Messages, TagDiffSummary(awsTags, diffs.tagDiff)...)
+		diffs.AddChanges(TagChanges(awsTags, tagDiff)...)
 	}
 
-	if !diff {
-		return nil, nil
-	}
-
-	return diffs, nil
+	return diff
 }
 
 // apply provisions are new acm certificate

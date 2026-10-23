@@ -41,7 +41,10 @@ This package manages the loading, parsing, and validation of `buildit` configura
   print in one burst at the end), `PlanResult` collects. Keep it that way
   (DEVOPS-8928): libbuildit consumers such as wafer render plans with their own field set, and a
   `--json` plan needs the entries as values. New plan outcomes are a `PlanAction` plus a renderer
-  case, never a `log.*` call inside `PlanResult`. `config/testdata/plan_*.golden` pin the exact
+  case, never a `log.*` call inside `PlanResult`. `PlanEntry.Changes` carries a diff's structured
+  `[]resource.Change` when the resource's diff implements `resource.DetailedResourceDiff`
+  (DEVOPS-8929); it is nil for resources that have not adopted it, so consumers fall back to
+  `Differences`. `config/testdata/plan_*.golden` pin the exact
   output; regenerate with `go test ./config -run TestPlanTargetsOutput -update` only when the
   output is meant to change.
 - **Interpolation**: Support `${VAR_NAME}` syntax for variable substitution.

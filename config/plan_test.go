@@ -42,6 +42,12 @@ func newComparable(name string, diff *resource.BaseResourceDiff) fakeComparable 
 	return f
 }
 
+// fakeDetailedDiff is a diff that also reports structured changes.
+type fakeDetailedDiff struct {
+	resource.BaseResourceDiff
+	resource.ChangeSet
+}
+
 func singleEntry(t *testing.T, res resource.Resource, targets []resource.Key) PlanEntry {
 	t.Helper()
 	g := &Graph{}
@@ -74,6 +80,23 @@ func TestPlanResultClassifiesEachAction(t *testing.T) {
 			want: PlanEntry{
 				Key: resource.NewKey("main", "example-update"), Type: "config.fakeComparable", Action: PlanUpdate,
 				Differences: []string{"name: old-name != new-name"}, AWSResource: existing,
+			},
+		},
+		{
+			name: "update carries changes when the diff is detailed",
+			res: func() fakeComparable {
+				d := &fakeDetailedDiff{BaseResourceDiff: resource.BaseResourceDiff{
+					Messages: []string{"port is not the same"}, Resource: existing,
+				}}
+				d.AddChange("port", "80", "443")
+				f := newComparable("example-detailed", nil)
+				f.diff = d
+				return f
+			}(),
+			want: PlanEntry{
+				Key: resource.NewKey("main", "example-detailed"), Type: "config.fakeComparable", Action: PlanUpdate,
+				Differences: []string{"port is not the same"}, AWSResource: existing,
+				Changes: []resource.Change{{Field: "port", From: "80", To: "443"}},
 			},
 		},
 		{

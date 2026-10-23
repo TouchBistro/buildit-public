@@ -3,6 +3,8 @@ package resource
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/TouchBistro/buildit/awsw"
@@ -23,7 +25,7 @@ const (
 
 // CWLogGroup represents a CloudWatch LogGroup
 type CWLogGroup struct {
-	BaseResource `yaml:",inline"`
+	BaseResource  `yaml:",inline"`
 	Name          string                   `yaml:"-"`
 	Retention     *int32                   `yaml:"retention"`
 	MetricFilters []CWLogGroupMetricFilter `yaml:"metricFilters"`
@@ -40,55 +42,64 @@ type CWLogGroupMetricFilter struct {
 	MetricTransformations []CWLogGroupMetricFilterTransformation `yaml:"metricTransformations"`
 }
 
-// equals returns true if this metric filter is the same as other, else false
-func (mf CWLogGroupMetricFilter) equals(other CWLogGroupMetricFilter) bool {
-
-	if mf.Name != other.Name || mf.Pattern != other.Pattern {
-		return false
+// changes returns one Change per setting on which the desired filter mf differs
+// from the existing one, or nil when they are the same. Field is the YAML path
+// under prefix, From the existing (AWS) value and To the desired value.
+func (mf CWLogGroupMetricFilter) changes(existing CWLogGroupMetricFilter, prefix string) []Change {
+	var changes []Change
+	add := func(field string, from, to any) {
+		changes = append(changes, Change{Field: prefix + field, From: ChangeValue(from), To: ChangeValue(to)})
 	}
 
-	if len(mf.MetricTransformations) != len(other.MetricTransformations) {
-		return false
-	} else {
-		for n, t := range mf.MetricTransformations {
-			t2 := other.MetricTransformations[n]
+	if mf.Name != existing.Name {
+		add("name", existing.Name, mf.Name)
+	}
+	if mf.Pattern != existing.Pattern {
+		add("pattern", existing.Pattern, mf.Pattern)
+	}
 
-			if t.Name != t2.Name {
-				return false
-			}
+	if len(mf.MetricTransformations) != len(existing.MetricTransformations) {
+		add("metricTransformations", len(existing.MetricTransformations), len(mf.MetricTransformations))
+		return changes
+	}
 
-			if t.Namespace != t2.Namespace {
-				return false
-			}
+	for n, t := range mf.MetricTransformations {
+		t2 := existing.MetricTransformations[n]
+		tp := fmt.Sprintf("metricTransformations[%d].", n)
 
-			if util.CoalesceComparable(t.Unit, "None") != util.CoalesceComparable(t2.Unit, "None") {
-				return false
-			}
+		if t.Name != t2.Name {
+			add(tp+"name", t2.Name, t.Name)
+		}
+		if t.Namespace != t2.Namespace {
+			add(tp+"namespace", t2.Namespace, t.Namespace)
+		}
+		// An unset unit means "None", which is what putFilterMetrics writes.
+		if from, to := util.CoalesceComparable(t2.Unit, "None"), util.CoalesceComparable(t.Unit, "None"); from != to {
+			add(tp+"unit", from, to)
+		}
+		if t.Value != t2.Value {
+			add(tp+"value", t2.Value, t.Value)
+		}
+		if t.DefaultValue != t2.DefaultValue {
+			add(tp+"defaultValue", t2.DefaultValue, t.DefaultValue)
+		}
 
-			if t.Value != t2.Value {
-				return false
-			}
-
-			if t.DefaultValue != t2.DefaultValue {
-				return false
-			}
-
-			if len(t.Dimensions) != len(t2.Dimensions) {
-				return false
-			} else {
-				for k, v := range t.Dimensions {
-					if t2v, ok := t2.Dimensions[k]; !ok {
-						return false
-					} else {
-						if v != t2v {
-							return false
-						}
-					}
-				}
+		keys := make(map[string]struct{}, len(t.Dimensions)+len(t2.Dimensions))
+		for k := range t.Dimensions {
+			keys[k] = struct{}{}
+		}
+		for k := range t2.Dimensions {
+			keys[k] = struct{}{}
+		}
+		for _, k := range slices.Sorted(maps.Keys(keys)) {
+			from, inExisting := t2.Dimensions[k]
+			to, inDesired := t.Dimensions[k]
+			if inExisting != inDesired || from != to {
+				add(tp+"dimensions."+k, from, to)
 			}
 		}
 	}
-	return true
+	return changes
 }
 
 // CWLogGroupMetricFilterTransformations represents a CloudWatch LogGroup Metric Filter Transformation
@@ -285,6 +296,7 @@ func (c CWLogGroup) fetchExisting(ctx context.Context) (*CWLogGroup, error) {
 
 type CWLogGroupDiff struct {
 	BaseResourceDiff
+	ChangeSet
 
 	diffRetention     bool
 	metricfiltersDiff bool
@@ -301,60 +313,76 @@ func (c CWLogGroup) Compare(ctx context.Context) (ResourceDiff, error) {
 		return nil, errors.Wrapf(err, "error fetching aws resource for %v", c.Identifier())
 	}
 
-	diffs := &CWLogGroupDiff{}
-
 	if existing == nil {
+		diffs := &CWLogGroupDiff{}
 		diffs.Messages = append(diffs.Messages, "cloudwatch log group does not exist")
 		return diffs, nil
 	}
 
-	diffs.Resource = existing
 	log.Debugf("updating cloudwatch log group for %v", c.Identifier())
+
+	awsTags, err := awsw.NewCloudWatchLogs(ctx, c.Context.ProviderName).GetResourceTags(ctx, *existing.Arn)
+	if err != nil {
+		return nil, err
+	}
+
+	diffs := c.compareLogGroup(ctx, existing, awsTags)
+	if diffs == nil {
+		return nil, nil
+	}
+	return diffs, nil
+}
+
+// compareLogGroup compares the definition against the fetched log group and its
+// tags and returns the diff, or nil when nothing differs. It makes no AWS calls,
+// so a test can assert the messages and Changes without credentials.
+func (c CWLogGroup) compareLogGroup(ctx context.Context, existing *CWLogGroup, awsTags map[string]string) *CWLogGroupDiff {
+	diffs := &CWLogGroupDiff{}
+	diffs.Resource = existing
 	found := false
 
-	// retention
+	// retention: AWS reports "never expire" as nil, which renders as "".
 	if util.CoalesceComparable(c.Retention, 0) != util.CoalesceComparable(existing.Retention, 0) {
 		found = true
 		diffs.diffRetention = true
 		diffs.Messages = append(diffs.Messages, "retention is not the same")
+		diffs.AddChange("retention", ChangeValue(existing.Retention), ChangeValue(c.Retention))
 	}
 
 	// metric filters
-	if len(c.MetricFilters) > len(existing.MetricFilters) {
+	if len(c.MetricFilters) != len(existing.MetricFilters) {
 		found = true
 		diffs.metricfiltersDiff = true
-		diffs.Messages = append(diffs.Messages, "additional metric filters defined than what exist")
-	} else if len(existing.MetricFilters) > len(c.MetricFilters) {
-		found = true
-		diffs.metricfiltersDiff = true
-		diffs.Messages = append(diffs.Messages, "less metric filters defined than what exist")
+		msg := "less metric filters defined than what exist"
+		if len(c.MetricFilters) > len(existing.MetricFilters) {
+			msg = "additional metric filters defined than what exist"
+		}
+		diffs.Messages = append(diffs.Messages, msg)
+		diffs.AddChange("metricFilters", ChangeValue(len(existing.MetricFilters)), ChangeValue(len(c.MetricFilters)))
 	} else {
 		for n, f := range c.MetricFilters {
-			if !f.equals(existing.MetricFilters[n]) {
+			if changes := f.changes(existing.MetricFilters[n], fmt.Sprintf("metricFilters[%d].", n)); len(changes) > 0 {
 				found = true
 				diffs.metricfiltersDiff = true
 				diffs.Messages = append(diffs.Messages, fmt.Sprintf("metric filter at index %v is not the same", n))
+				diffs.AddChanges(changes...)
 			}
 		}
 	}
 
 	// tags
-	awsTags, err := awsw.NewCloudWatchLogs(ctx, c.Context.ProviderName).GetResourceTags(ctx, *existing.Arn)
-	if err != nil {
-		return nil, err
-	}
 	if tagDiff := TagDiffForContext(ctx, awsTags, c.Tags); tagDiff.HasChanges() {
 		found = true
 		diffs.tagsDiff = true
 		diffs.tagDiff = tagDiff
 		diffs.Messages = append(diffs.Messages, TagDiffSummary(awsTags, diffs.tagDiff)...)
+		diffs.AddChanges(TagChanges(awsTags, diffs.tagDiff)...)
 	}
 
 	if !found {
-		return nil, nil
+		return nil
 	}
-
-	return diffs, nil
+	return diffs
 }
 
 // apply creates a new cloudwatch log group and any log metric filters

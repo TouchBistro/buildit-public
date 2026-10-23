@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/TouchBistro/buildit/awsw"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	cftypes "github.com/aws/aws-sdk-go-v2/service/cloudfront/types"
 	"github.com/stretchr/testify/assert"
@@ -30,6 +31,15 @@ func testDist() *CloudfrontDistribution {
 	}
 	r.Normalize(context.Background())
 	return r
+}
+
+// assertNoDistributionDiff asserts compareDistributionConfig reports neither a message
+// nor a Change between the two configs.
+func assertNoDistributionDiff(t *testing.T, existing, desired cftypes.DistributionConfig, msgAndArgs ...any) {
+	t.Helper()
+	msgs, changes := compareDistributionConfig(existing, desired, nil)
+	assert.Empty(t, msgs, msgAndArgs...)
+	assert.Empty(t, changes, msgAndArgs...)
 }
 
 func TestCloudfrontDistribution_Normalize(t *testing.T) {
@@ -543,7 +553,7 @@ func TestCloudfrontDistribution_Compare_RoundTripNoDiff(t *testing.T) {
 	awsLike.Origins.Items[0].CustomHeaders = &cftypes.CustomHeaders{Quantity: aws.Int32(0)}
 	awsLike.CustomErrorResponses = &cftypes.CustomErrorResponses{Quantity: aws.Int32(0)}
 
-	assert.Empty(t, compareDistributionConfig(*awsLike, *desired, nil),
+	assertNoDistributionDiff(t, *awsLike, *desired,
 		"a config read back from AWS must not differ from the regenerated desired config")
 }
 
@@ -566,7 +576,7 @@ func TestCloudfrontDistribution_Compare_IgnoresUnmanagedFields(t *testing.T) {
 	desiredCfg, err := testDist().generateConfig(ctx)
 	require.NoError(t, err)
 
-	assert.Empty(t, compareDistributionConfig(*existingCfg, *desiredCfg, nil),
+	assertNoDistributionDiff(t, *existingCfg, *desiredCfg,
 		"unmanaged ordered cache behaviors must not produce a diff")
 }
 
@@ -590,7 +600,7 @@ func TestCloudfrontDistribution_Compare_ClearsWebACLAndAliases(t *testing.T) {
 	require.NotNil(t, desiredCfg.WebACLId)
 	assert.Equal(t, "", aws.ToString(desiredCfg.WebACLId))
 
-	msgs := compareDistributionConfig(*existingCfg, *desiredCfg, nil)
+	msgs, _ := compareDistributionConfig(*existingCfg, *desiredCfg, nil)
 	joined := strings.Join(msgs, "\n")
 	assert.Contains(t, joined, "webAclName")
 	assert.Contains(t, joined, "aliases")
@@ -618,7 +628,7 @@ func TestCloudfrontDistribution_Compare_DiffShowsUserSuppliedValues(t *testing.T
 	desiredCfg, err := desired.generateConfig(ctx)
 	require.NoError(t, err)
 
-	msgs := compareDistributionConfig(*existingCfg, *desiredCfg, desired.displayValues)
+	msgs, _ := compareDistributionConfig(*existingCfg, *desiredCfg, desired.displayValues)
 	joined := strings.Join(msgs, "\n")
 
 	// policy ids render as their documented managed names on both sides
@@ -647,11 +657,16 @@ func TestCloudfrontDistribution_Compare_WebACLSameNameDifferentACL(t *testing.T)
 	desiredCfg, err := desired.generateConfig(ctx)
 	require.NoError(t, err)
 
-	msgs := compareDistributionConfig(*existingCfg, *desiredCfg, nil)
+	msgs, changes := compareDistributionConfig(*existingCfg, *desiredCfg, nil)
 	joined := strings.Join(msgs, "\n")
 	assert.Contains(t, joined, "webAclName")
 	assert.Contains(t, joined, "old-id")
 	assert.Contains(t, joined, "new-id")
+	assert.Equal(t, []Change{{
+		Field: "webAclName",
+		From:  "arn:aws:wafv2:us-east-1:1:global/webacl/test-web-acl/old-id",
+		To:    "arn:aws:wafv2:us-east-1:1:global/webacl/test-web-acl/new-id",
+	}}, changes)
 }
 
 // TestCloudfrontDistribution_GenerateConfig_DoesNotMutateUserInput guards the
@@ -678,7 +693,7 @@ func TestCloudfrontDistribution_GenerateConfig_DoesNotMutateUserInput(t *testing
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", *r.DefaultCacheBehavior.CachePolicyId)
 
 	// repeated generation is deterministic
-	assert.Empty(t, compareDistributionConfig(*first, *second, nil))
+	assertNoDistributionDiff(t, *first, *second)
 }
 
 // TestCloudfrontDistribution_ResolveCacheBehaviorPolicies_ReturnsCopy verifies the
@@ -715,13 +730,13 @@ func TestCloudfrontDistribution_Compare_ClearsLogging(t *testing.T) {
 	require.NotNil(t, desiredCfg.Logging)
 	assert.False(t, aws.ToBool(desiredCfg.Logging.Enabled))
 
-	msgs := compareDistributionConfig(*existingCfg, *desiredCfg, nil)
+	msgs, _ := compareDistributionConfig(*existingCfg, *desiredCfg, nil)
 	assert.Contains(t, strings.Join(msgs, "\n"), "logging")
 
 	// And a second apply with logging still absent must report no logging diff.
 	desiredCfg2, err := desired.generateConfig(ctx)
 	require.NoError(t, err)
-	assert.Empty(t, compareDistributionConfig(*desiredCfg, *desiredCfg2, nil))
+	assertNoDistributionDiff(t, *desiredCfg, *desiredCfg2)
 }
 
 func TestCloudfrontDistribution_Compare_NoChange(t *testing.T) {
@@ -733,7 +748,7 @@ func TestCloudfrontDistribution_Compare_NoChange(t *testing.T) {
 	b, err := r.generateConfig(ctx)
 	require.NoError(t, err)
 
-	assert.Empty(t, compareDistributionConfig(*a, *b, nil))
+	assertNoDistributionDiff(t, *a, *b)
 }
 
 func TestCloudfrontDistribution_Compare_DetectsChanges(t *testing.T) {
@@ -806,11 +821,196 @@ func TestCloudfrontDistribution_Compare_DetectsChanges(t *testing.T) {
 			b, err := variant.generateConfig(ctx)
 			require.NoError(t, err)
 
-			msgs := compareDistributionConfig(*a, *b, nil)
+			msgs, _ := compareDistributionConfig(*a, *b, nil)
 			require.NotEmpty(t, msgs, "expected a detected change")
 			assert.Contains(t, strings.Join(msgs, "\n"), tc.want)
 		})
 	}
+}
+
+// TestCloudfrontDistribution_Compare_Changes asserts the structured Changes recorded
+// beside the diff messages: Field is the YAML path of the setting, From the existing
+// value and To the desired one, lists joined by comma, and nothing else is recorded.
+func TestCloudfrontDistribution_Compare_Changes(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name   string
+		mutate func(r *CloudfrontDistribution)
+		want   []Change
+	}{
+		{"scalar", func(r *CloudfrontDistribution) { r.PriceClass = aws.String(CloudfrontPriceClassAll) },
+			[]Change{{Field: "priceClass", From: "PriceClass_100", To: "PriceClass_All"}}},
+		{"bool", func(r *CloudfrontDistribution) { r.Enabled = aws.Bool(false) },
+			[]Change{{Field: "enabled", From: "true", To: "false"}}},
+		{"aliases", func(r *CloudfrontDistribution) { r.Aliases = []string{"www.example.com", "cdn.example.com"} },
+			[]Change{{Field: "aliases", From: "", To: "cdn.example.com,www.example.com"}}},
+		{"certificate", func(r *CloudfrontDistribution) {
+			r.Certificate = aws.String("arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000000")
+		}, []Change{
+			// defaultCert flips too but is implied by certificate; it records no Change
+			{Field: "certificate", From: "", To: "arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000000"},
+			{Field: "minimumProtocolVersion", From: "", To: CloudfrontMinProtocolTLSv122021},
+			{Field: "sslSupportMethod", From: "", To: CloudfrontSSLSupportSNIOnly},
+		}},
+		{"logging", func(r *CloudfrontDistribution) { r.Logging.Prefix = aws.String("cf/other") },
+			[]Change{{Field: "logging.prefix", From: "cf/test", To: "cf/other"}}},
+		{"default cache behavior", func(r *CloudfrontDistribution) {
+			r.DefaultCacheBehavior.FunctionAssociations = []CloudfrontFunctionAssociation{
+				{EventType: CloudfrontEventViewerRequest, FunctionARN: "arn:aws:cloudfront::123456789012:function/example-fn"},
+			}
+		}, []Change{{Field: "defaultCacheBehavior.functionAssociations", From: "", To: "viewer-request=arn:aws:cloudfront::123456789012:function/example-fn"}}},
+		{"origin setting", func(r *CloudfrontDistribution) { r.Origins[0].ConnectionAttempts = aws.Int32(1) },
+			[]Change{{Field: "origins[primary].connectionAttempts", From: "3", To: "1"}}},
+		{"origin vpc setting", func(r *CloudfrontDistribution) { r.Origins[0].OriginReadTimeout = aws.Int32(60) },
+			[]Change{{Field: "origins[primary].originReadTimeout", From: "30", To: "60"}}},
+		{"origin target", func(r *CloudfrontDistribution) { r.Origins[0].resolvedVpcOriginId = "vo_999" },
+			[]Change{{Field: "origins[primary].target", From: "vo_123", To: "vo_999"}}},
+		{"origin type", func(r *CloudfrontDistribution) {
+			r.Origins[0].Type = CloudfrontOriginTypeCustom
+			r.Origins[0].HTTPPort = aws.Int32(80)
+			r.Origins[0].HTTPSPort = aws.Int32(443)
+			r.Origins[0].OriginProtocolPolicy = aws.String(CloudfrontOriginProtocolHTTPSOnly)
+			r.Origins[0].OriginSSLProtocols = []string{"TLSv1.2"}
+		}, []Change{{Field: "origins[primary].type", From: "vpc", To: "custom"}}},
+		{"origin added", func(r *CloudfrontDistribution) {
+			r.Origins = append(r.Origins, CloudfrontOrigin{
+				Name: "extra", Type: CloudfrontOriginTypeCustom, Target: "api.example.com",
+				resolvedDomainName: "api.example.com",
+			})
+			r.Normalize(ctx)
+		}, []Change{{Field: "origins[extra]", From: "", To: "type=custom,target=api.example.com"}}},
+		{"origin removed", func(r *CloudfrontDistribution) { r.Origins = nil },
+			[]Change{{Field: "origins[primary]", From: "type=vpc,target=alb.internal.example.com", To: ""}}},
+		{"custom error response added", func(r *CloudfrontDistribution) {
+			r.CustomErrorResponses = []CloudfrontCustomErrorResponse{{ErrorCode: 404, ResponseCode: aws.String("200"), ResponsePagePath: aws.String("/index.html")}}
+		}, []Change{{Field: "customErrorResponses[404]", From: "", To: "responseCode=200,responsePagePath=/index.html,errorCachingMinTTL=0"}}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base := testDist()
+			variant := testDist()
+			tc.mutate(variant)
+
+			a, err := base.generateConfig(ctx)
+			require.NoError(t, err)
+			b, err := variant.generateConfig(ctx)
+			require.NoError(t, err)
+
+			msgs, changes := compareDistributionConfig(*a, *b, nil)
+			require.NotEmpty(t, msgs, "expected a detected change")
+			assert.Equal(t, tc.want, changes)
+		})
+	}
+
+	t.Run("custom error response setting", func(t *testing.T) {
+		base := testDist()
+		base.CustomErrorResponses = []CloudfrontCustomErrorResponse{{ErrorCode: 404, ResponseCode: aws.String("200"), ResponsePagePath: aws.String("/index.html")}}
+		variant := testDist()
+		variant.CustomErrorResponses = []CloudfrontCustomErrorResponse{{ErrorCode: 404, ResponseCode: aws.String("404"), ResponsePagePath: aws.String("/index.html")}}
+
+		a, err := base.generateConfig(ctx)
+		require.NoError(t, err)
+		b, err := variant.generateConfig(ctx)
+		require.NoError(t, err)
+
+		_, changes := compareDistributionConfig(*a, *b, nil)
+		assert.Equal(t, []Change{{Field: "customErrorResponses[404].responseCode", From: "200", To: "404"}}, changes)
+	})
+}
+
+// TestCloudfrontDistribution_Compare_ChangesShowUserSuppliedValues is the structured
+// counterpart of TestCloudfrontDistribution_Compare_DiffShowsUserSuppliedValues: From/To
+// go through the same display map as the messages, so a Change shows the certificate,
+// policy and web ACL names the user wrote, never the resolved ARN or id.
+func TestCloudfrontDistribution_Compare_ChangesShowUserSuppliedValues(t *testing.T) {
+	ctx := context.Background()
+	const certArn = "arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000000"
+
+	existing := testDist() // default cert; default cache policy: managed CachingDisabled
+	existing.WebACLName = aws.String("arn:aws:wafv2:us-east-1:123456789012:global/webacl/old-web-acl/1f562b14-7729-46d7-aff8-5a85f9b5eaa3")
+	existingCfg, err := existing.generateConfig(ctx)
+	require.NoError(t, err)
+
+	desired := testDist()
+	desired.Certificate = aws.String(certArn)
+	desired.DefaultCacheBehavior.CachePolicyId = aws.String("CachingOptimized")
+	desired.DefaultCacheBehavior.OriginRequestPolicyId = aws.String("AllViewer")
+	desired.WebACLName = aws.String("arn:aws:wafv2:us-east-1:1:global/webacl/new-web-acl/abc")
+	desired.Normalize(ctx) // canonicalize the managed policy names to their ids
+	// simulate what certificate and web ACL resolution record (the lookups need AWS)
+	desired.displayValues[certArn] = "cdn.example.com"
+	desired.displayValues["arn:aws:wafv2:us-east-1:1:global/webacl/new-web-acl/abc"] = "new-web-acl"
+	desiredCfg, err := desired.generateConfig(ctx)
+	require.NoError(t, err)
+
+	_, changes := compareDistributionConfig(*existingCfg, *desiredCfg, desired.displayValues)
+
+	assert.Equal(t, []Change{
+		{Field: "webAclName", From: "old-web-acl", To: "new-web-acl"},
+		{Field: "certificate", From: "", To: "cdn.example.com"},
+		{Field: "minimumProtocolVersion", From: "", To: CloudfrontMinProtocolTLSv122021},
+		{Field: "sslSupportMethod", From: "", To: CloudfrontSSLSupportSNIOnly},
+		{Field: "defaultCacheBehavior.cachePolicyId", From: "CachingDisabled", To: "CachingOptimized"},
+		{Field: "defaultCacheBehavior.originRequestPolicyId", From: "AllViewerAndCloudFrontHeaders-2022-06", To: "AllViewer"},
+	}, changes)
+	for _, c := range changes {
+		for _, v := range []string{c.From, c.To} {
+			assert.NotContains(t, v, "arn:")
+			assert.NotContains(t, v, "658327ea") // CachingOptimized's id
+		}
+	}
+}
+
+// TestCloudfrontDistribution_DiffExisting_Changes drives the whole post-fetch diff:
+// config Changes come first in message order, tag Changes follow via TagChanges, the
+// result is a DetailedResourceDiff, and an identical pair yields no diff at all.
+func TestCloudfrontDistribution_DiffExisting_Changes(t *testing.T) {
+	ctx := context.Background()
+
+	existingCfg, err := testDist().generateConfig(ctx)
+	require.NoError(t, err)
+	existing := &awsw.ExistingDistribution{
+		Id:     "E123EXAMPLE",
+		ARN:    "arn:aws:cloudfront::123456789012:distribution/E123EXAMPLE",
+		ETag:   "example-etag",
+		Config: *existingCfg,
+		Tags:   map[string]string{"env": "old-env", "team": "example-team", "stale": "x"},
+	}
+
+	desired := testDist()
+	desired.Comment = aws.String("example comment")
+	desired.Tags = map[string]string{"env": "new-env", "team": "example-team", "owner": "example-owner"}
+	generated, err := desired.generateConfig(ctx)
+	require.NoError(t, err)
+
+	diff := desired.diffExisting(ctx, existing, generated)
+	require.NotNil(t, diff)
+	var detailed DetailedResourceDiff = diff
+	assert.True(t, diff.configChanged)
+	assert.True(t, diff.tagsDiff)
+
+	assert.Equal(t, []string{
+		`comment: "" -> "example comment"`,
+		"tag env is different: old-env -> new-env",
+		"tag stale:x is removed",
+		"tag owner is added: example-owner",
+	}, diff.Differences())
+	assert.Equal(t, []Change{
+		{Field: "comment", From: "", To: "example comment"},
+		{Field: "tags.env", From: "old-env", To: "new-env"},
+		{Field: "tags.stale", From: "x"},
+		{Field: "tags.owner", To: "example-owner"},
+	}, detailed.Changes())
+
+	t.Run("identical pair yields no diff", func(t *testing.T) {
+		same := testDist()
+		same.Tags = map[string]string{"env": "old-env", "team": "example-team", "stale": "x"}
+		sameCfg, err := same.generateConfig(ctx)
+		require.NoError(t, err)
+		assert.Nil(t, same.diffExisting(ctx, existing, sameCfg))
+	})
 }
 
 // TestCloudfrontDistribution_ResolveOrigins_NoAWSCalls covers the resolution paths that

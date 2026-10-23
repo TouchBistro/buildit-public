@@ -89,6 +89,27 @@ func TagDiffSummary(current map[string]string, diff util.TagDiffResult) []string
 	return messages
 }
 
+// TagChanges is the structured counterpart of TagDiffSummary: one Change per
+// tag under "tags.<key>", in the same order (changed, removed, added), with
+// From empty for an added tag and To empty for a removed one.
+func TagChanges(current map[string]string, diff util.TagDiffResult) []Change {
+	changes := make([]Change, 0, len(diff.Changed)+len(diff.Deleted)+len(diff.Added))
+
+	for _, key := range util.StringMap(diff.Changed).Keys() {
+		changes = append(changes, Change{Field: "tags." + key, From: current[key], To: diff.Changed[key]})
+	}
+
+	for _, key := range util.StringMap(diff.Deleted).Keys() {
+		changes = append(changes, Change{Field: "tags." + key, From: current[key]})
+	}
+
+	for _, key := range util.StringMap(diff.Added).Keys() {
+		changes = append(changes, Change{Field: "tags." + key, To: diff.Added[key]})
+	}
+
+	return changes
+}
+
 // TagDiffForContext returns a tag diff and honors ignored tags from context when present.
 func TagDiffForContext(ctx context.Context, current map[string]string, desired map[string]string) util.TagDiffResult {
 	if ctx != nil {

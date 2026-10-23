@@ -26,17 +26,17 @@ type CloudfrontVpcOrigin struct {
 	Name string `yaml:"-"`
 	// Target is the ARN or name of the ALB/NLB the VPC origin points at. It may carry
 	// a `provider::` prefix to resolve the load balancer via a different provider.
-	Target               string            `yaml:"target"`
-	HTTPPort             *int32            `yaml:"httpPort"`
-	HTTPSPort            *int32            `yaml:"httpsPort"`
-	OriginProtocolPolicy *string           `yaml:"originProtocolPolicy"`
+	Target               string  `yaml:"target"`
+	HTTPPort             *int32  `yaml:"httpPort"`
+	HTTPSPort            *int32  `yaml:"httpsPort"`
+	OriginProtocolPolicy *string `yaml:"originProtocolPolicy"`
 	// OriginSSLProtocol is singular: the SDK models protocols as a list, but AWS
 	// accepts exactly one for VPC origins (the console offers a single choice; the
 	// API rejects multiple entries).
-	OriginSSLProtocol *string `yaml:"originSslProtocol"`
-	Tags                 map[string]string `yaml:"tags"`
-	GlobalTags           map[string]string `yaml:"-"`
-	DependsOn            []Key             `yaml:"dependsOn"`
+	OriginSSLProtocol *string           `yaml:"originSslProtocol"`
+	Tags              map[string]string `yaml:"tags"`
+	GlobalTags        map[string]string `yaml:"-"`
+	DependsOn         []Key             `yaml:"dependsOn"`
 }
 
 // Key returns the unique key for the resource for this buildit context.
@@ -247,6 +247,7 @@ func (c CloudfrontVpcOrigin) Destroy(ctx context.Context) error {
 // CloudfrontVpcOriginDiff captures the diff between desired and existing state.
 type CloudfrontVpcOriginDiff struct {
 	BaseResourceDiff
+	ChangeSet
 
 	id            string
 	arn           string
@@ -282,16 +283,18 @@ func (c CloudfrontVpcOrigin) Compare(ctx context.Context) (ResourceDiff, error) 
 	diffs.etag = existing.ETag
 	diffs.desired = desired
 
-	configMsgs := compareVpcOriginEndpointConfig(existing.Config, *desired)
+	configMsgs, configChanges := compareVpcOriginEndpointConfig(existing.Config, *desired)
 	if len(configMsgs) > 0 {
 		diffs.configChanged = true
 		diffs.Messages = append(diffs.Messages, configMsgs...)
+		diffs.AddChanges(configChanges...)
 	}
 
 	if tagDiff := TagDiffForContext(ctx, existing.Tags, c.Tags); tagDiff.HasChanges() {
 		diffs.tagsDiff = true
 		diffs.tagDiff = tagDiff
 		diffs.Messages = append(diffs.Messages, TagDiffSummary(existing.Tags, tagDiff)...)
+		diffs.AddChanges(TagChanges(existing.Tags, tagDiff)...)
 	}
 
 	if !diffs.configChanged && !diffs.tagsDiff {
@@ -332,30 +335,37 @@ func (c CloudfrontVpcOrigin) generateEndpointConfig(ctx context.Context) (*cftyp
 }
 
 // compareVpcOriginEndpointConfig returns human-readable messages describing the
-// differences between an existing endpoint config and the desired one. An empty
-// result means no change is required. Name is not compared: existing origins are
+// differences between an existing endpoint config and the desired one, and one
+// Change per differing setting keyed by its buildit.yml field. Both slices are
+// empty when no change is required. Name is not compared: existing origins are
 // looked up by name, so it always matches.
-func compareVpcOriginEndpointConfig(existing, desired cftypes.VpcOriginEndpointConfig) []string {
+func compareVpcOriginEndpointConfig(existing, desired cftypes.VpcOriginEndpointConfig) ([]string, []Change) {
 	var msgs []string
+	var changes []Change
 
 	if aws.ToString(existing.Arn) != aws.ToString(desired.Arn) {
 		msgs = append(msgs, fmt.Sprintf("target: %q -> %q", aws.ToString(existing.Arn), aws.ToString(desired.Arn)))
+		changes = append(changes, Change{Field: "target", From: ChangeValue(existing.Arn), To: ChangeValue(desired.Arn)})
 	}
 	if aws.ToInt32(existing.HTTPPort) != aws.ToInt32(desired.HTTPPort) {
 		msgs = append(msgs, fmt.Sprintf("httpPort: %d -> %d", aws.ToInt32(existing.HTTPPort), aws.ToInt32(desired.HTTPPort)))
+		changes = append(changes, Change{Field: "httpPort", From: ChangeValue(existing.HTTPPort), To: ChangeValue(desired.HTTPPort)})
 	}
 	if aws.ToInt32(existing.HTTPSPort) != aws.ToInt32(desired.HTTPSPort) {
 		msgs = append(msgs, fmt.Sprintf("httpsPort: %d -> %d", aws.ToInt32(existing.HTTPSPort), aws.ToInt32(desired.HTTPSPort)))
+		changes = append(changes, Change{Field: "httpsPort", From: ChangeValue(existing.HTTPSPort), To: ChangeValue(desired.HTTPSPort)})
 	}
 	if existing.OriginProtocolPolicy != desired.OriginProtocolPolicy {
 		msgs = append(msgs, fmt.Sprintf("originProtocolPolicy: %q -> %q", existing.OriginProtocolPolicy, desired.OriginProtocolPolicy))
+		changes = append(changes, Change{Field: "originProtocolPolicy", From: string(existing.OriginProtocolPolicy), To: string(desired.OriginProtocolPolicy)})
 	}
 
 	if e, d := sslProtocolStrings(existing.OriginSslProtocols), sslProtocolStrings(desired.OriginSslProtocols); !slices.Equal(e, d) {
 		msgs = append(msgs, fmt.Sprintf("originSslProtocols: %v -> %v", e, d))
+		changes = append(changes, Change{Field: "originSslProtocol", From: ChangeValue(e), To: ChangeValue(d)})
 	}
 
-	return msgs
+	return msgs, changes
 }
 
 // sslProtocolStrings returns the protocols as a sorted string slice so the comparison

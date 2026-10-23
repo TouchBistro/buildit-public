@@ -120,6 +120,53 @@ func (r ResourceName) Compare(ctx context.Context) (ResourceDiff, error) {
 }
 ```
 
+### Structured Changes: `DetailedResourceDiff`
+
+`Differences()` is prose built for a human. A diff that also implements `DetailedResourceDiff`
+(`resource_comparable.go`) reports the same differences as `[]Change{Field, From, To}`, which is
+what libbuildit consumers and a `--json` plan read (DEVOPS-8929). Adoption is per resource and
+optional: `Graph.PlanResult` fills `PlanEntry.Changes` only when the diff implements it.
+
+```go
+type ResourceNameDiff struct {
+    BaseResourceDiff
+    ChangeSet          // embedding this makes the diff a DetailedResourceDiff
+    portDiff bool      // apply instructions stay exactly as they were
+}
+
+if r.Port != *existing.Port {
+    diffs.portDiff = true
+    diffs.Messages = append(diffs.Messages, "port is not the same")           // unchanged
+    diffs.AddChange("port", ChangeValue(existing.Port), ChangeValue(r.Port))  // added beside it
+}
+```
+
+Rules:
+
+- **Never replace `Messages`.** The diff structs carry the apply instructions `applyDiffs` reads
+  (`portDiff`, `tagDiff`, ...). `Changes` is added alongside; `Differences()` output must not change.
+- **One `AddChange` per differing setting**, next to the message it explains. A message that
+  summarises several settings ("healthcheck config is different") gets one Change per setting.
+- **`Field` is the YAML path** of the setting as the user wrote it: `port`, `healthcheck.path`,
+  `listeners[443].certificate`, `tags.env`. Not the SDK field name.
+- **`From` is AWS, `To` is the definition**, rendered with `ChangeValue` (dereferences SDK pointers,
+  nil is `""`). Empty `From` means added, empty `To` means removed. Where the human message shows a
+  user-supplied name instead of a resolved ARN or id (CloudFront's `displayValues`), `From`/`To`
+  go through the same map.
+- **Tags**: `diffs.AddChanges(TagChanges(awsTags, tagDiff)...)` right after the `TagDiffSummary`
+  append. Do not hand-roll tag changes.
+- **"does not exist" records no Change**: that diff is a create, and `PlanEntry.Changes` is only
+  read for updates.
+- **Nested sub-resources record their own Changes in their own vocabulary** (`LBListener`:
+  `sslPolicy`, `rules[0]`, `tags.env`) and the parent folds them under its path with
+  `prefixChanges` (`listeners[443].sslPolicy`). A sub-resource that is added or removed whole is
+  one Change on the parent, `From`/`To` a short `describe*` rendering (`"HTTPS forward example-tg"`);
+  a rule or action that differs in a way the definition has no single field for is likewise one
+  Change with both sides described, never a prose message copied into `To`.
+- **Test the comparison, not AWS.** Keep the fetches in `Compare` and the field comparison in a
+  pure helper that takes the fetched values, so a test can assert `Field`/`From`/`To` without
+  credentials. `compareDistributionConfig` in `cloudfront_distribution.go` is the model.
+
 ### Tag Comparison and Diff Pattern
 
 Use the shared tag diff helpers in `resource/resource_tags.go` for all resource tag comparisons.

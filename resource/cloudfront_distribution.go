@@ -772,6 +772,7 @@ func (c CloudfrontDistribution) Destroy(ctx context.Context) error {
 // CloudfrontDistributionDiff captures the diff between desired and existing state.
 type CloudfrontDistributionDiff struct {
 	BaseResourceDiff
+	ChangeSet
 
 	id            string
 	arn           string
@@ -790,8 +791,8 @@ func (c CloudfrontDistribution) Compare(ctx context.Context) (ResourceDiff, erro
 		return nil, err
 	}
 
-	diffs := &CloudfrontDistributionDiff{}
 	if existing == nil {
+		diffs := &CloudfrontDistributionDiff{}
 		diffs.Messages = append(diffs.Messages, "cloudfront distribution does not exist")
 		return diffs, nil
 	}
@@ -801,30 +802,44 @@ func (c CloudfrontDistribution) Compare(ctx context.Context) (ResourceDiff, erro
 		return nil, err
 	}
 
+	if diffs := c.diffExisting(ctx, existing, generated); diffs != nil {
+		return diffs, nil
+	}
+	return nil, nil
+}
+
+// diffExisting diffs a fetched distribution against the generated config and the
+// desired tags, recording a human message and a structured Change beside each other for
+// every differing setting. It makes no AWS calls, so tests can exercise the whole diff.
+// Returns nil when nothing managed differs.
+func (c CloudfrontDistribution) diffExisting(ctx context.Context, existing *awsw.ExistingDistribution, generated *cftypes.DistributionConfig) *CloudfrontDistributionDiff {
 	desired := mergeManagedConfig(existing.Config, generated)
 
+	diffs := &CloudfrontDistributionDiff{}
 	diffs.Resource = existing
 	diffs.id = existing.Id
 	diffs.arn = existing.ARN
 	diffs.etag = existing.ETag
 	diffs.desired = &desired
 
-	configMsgs := compareDistributionConfig(existing.Config, desired, c.displayValues)
+	configMsgs, configChanges := compareDistributionConfig(existing.Config, desired, c.displayValues)
 	if len(configMsgs) > 0 {
 		diffs.configChanged = true
 		diffs.Messages = append(diffs.Messages, configMsgs...)
+		diffs.AddChanges(configChanges...)
 	}
 
 	if tagDiff := TagDiffForContext(ctx, existing.Tags, c.Tags); tagDiff.HasChanges() {
 		diffs.tagsDiff = true
 		diffs.tagDiff = tagDiff
 		diffs.Messages = append(diffs.Messages, TagDiffSummary(existing.Tags, tagDiff)...)
+		diffs.AddChanges(TagChanges(existing.Tags, tagDiff)...)
 	}
 
 	if !diffs.configChanged && !diffs.tagsDiff {
-		return nil, nil
+		return nil
 	}
-	return diffs, nil
+	return diffs
 }
 
 // mergeManagedConfig builds the desired config for UpdateDistribution on top of the
@@ -1324,35 +1339,70 @@ func toMethods(in []string) []cftypes.Method {
 	return out
 }
 
+// configDiff collects the two renderings of a comparison side by side: the human
+// messages Differences() returns and the structured Changes a DetailedResourceDiff
+// reports. Every differing setting records one of each; the lists need not stay the
+// same length (one message can cover several settings, and a setting with no YAML key
+// records no Change).
+type configDiff struct {
+	msgs    []string
+	changes []Change
+}
+
+func (d *configDiff) msg(format string, args ...any) {
+	d.msgs = append(d.msgs, fmt.Sprintf(format, args...))
+}
+
+// change records a Change rendered with ChangeValue. An empty field marks a snapshot
+// field with no YAML setting (see changeFieldPath) and records nothing.
+func (d *configDiff) change(field string, from, to any) {
+	if field == "" {
+		return
+	}
+	d.changes = append(d.changes, Change{Field: field, From: ChangeValue(from), To: ChangeValue(to)})
+}
+
+func (d *configDiff) merge(o configDiff) {
+	d.msgs = append(d.msgs, o.msgs...)
+	d.changes = append(d.changes, o.changes...)
+}
+
 // compareDistributionConfig returns human-readable messages describing the managed-field
-// differences between an existing distribution config and the desired one. An empty result
-// means no managed change is required. Only fields buildit manages are compared, so drift
-// in unmanaged fields does not trigger spurious updates. The display map (resolved value
-// -> user-supplied form, nil-safe) makes messages read like the YAML config; both sides
-// pass through the same map, so it cannot mask or invent a difference.
-func compareDistributionConfig(existing, desired cftypes.DistributionConfig, display map[string]string) []string {
-	var msgs []string
+// differences between an existing distribution config and the desired one, and the same
+// differences as structured Changes keyed by YAML path. Empty results mean no managed
+// change is required. Only fields buildit manages are compared, so drift in unmanaged
+// fields does not trigger spurious updates. The display map (resolved value ->
+// user-supplied form, nil-safe) makes messages and Change values read like the YAML
+// config; both sides pass through the same map, so it cannot mask or invent a difference.
+func compareDistributionConfig(existing, desired cftypes.DistributionConfig, display map[string]string) ([]string, []Change) {
+	var out configDiff
 
 	e := newDistSnapshot(existing, display)
 	d := newDistSnapshot(desired, display)
 
 	if e.Comment != d.Comment {
-		msgs = append(msgs, fmt.Sprintf("comment: %q -> %q", e.Comment, d.Comment))
+		out.msg("comment: %q -> %q", e.Comment, d.Comment)
+		out.change("comment", e.Comment, d.Comment)
 	}
 	if e.Enabled != d.Enabled {
-		msgs = append(msgs, fmt.Sprintf("enabled: %v -> %v", e.Enabled, d.Enabled))
+		out.msg("enabled: %v -> %v", e.Enabled, d.Enabled)
+		out.change("enabled", e.Enabled, d.Enabled)
 	}
 	if e.DefaultRootObject != d.DefaultRootObject {
-		msgs = append(msgs, fmt.Sprintf("defaultRootObject: %q -> %q", e.DefaultRootObject, d.DefaultRootObject))
+		out.msg("defaultRootObject: %q -> %q", e.DefaultRootObject, d.DefaultRootObject)
+		out.change("defaultRootObject", e.DefaultRootObject, d.DefaultRootObject)
 	}
 	if e.HTTPVersion != d.HTTPVersion {
-		msgs = append(msgs, fmt.Sprintf("httpVersion: %q -> %q", e.HTTPVersion, d.HTTPVersion))
+		out.msg("httpVersion: %q -> %q", e.HTTPVersion, d.HTTPVersion)
+		out.change("httpVersion", e.HTTPVersion, d.HTTPVersion)
 	}
 	if e.IsIPV6Enabled != d.IsIPV6Enabled {
-		msgs = append(msgs, fmt.Sprintf("isIPV6Enabled: %v -> %v", e.IsIPV6Enabled, d.IsIPV6Enabled))
+		out.msg("isIPV6Enabled: %v -> %v", e.IsIPV6Enabled, d.IsIPV6Enabled)
+		out.change("isIPV6Enabled", e.IsIPV6Enabled, d.IsIPV6Enabled)
 	}
 	if e.PriceClass != d.PriceClass {
-		msgs = append(msgs, fmt.Sprintf("priceClass: %q -> %q", e.PriceClass, d.PriceClass))
+		out.msg("priceClass: %q -> %q", e.PriceClass, d.PriceClass)
+		out.change("priceClass", e.PriceClass, d.PriceClass)
 	}
 	if e.WebACLId != d.WebACLId {
 		eDisp, dDisp := webACLDisplay(display, e.WebACLId), webACLDisplay(display, d.WebACLId)
@@ -1361,22 +1411,27 @@ func compareDistributionConfig(existing, desired cftypes.DistributionConfig, dis
 			// ARNs disambiguate the change
 			eDisp, dDisp = e.WebACLId, d.WebACLId
 		}
-		msgs = append(msgs, fmt.Sprintf("webAclName: %q -> %q", eDisp, dDisp))
+		out.msg("webAclName: %q -> %q", eDisp, dDisp)
+		out.change("webAclName", eDisp, dDisp)
 	}
 	if !reflect.DeepEqual(e.Aliases, d.Aliases) {
-		msgs = append(msgs, fmt.Sprintf("aliases: %v -> %v", e.Aliases, d.Aliases))
+		out.msg("aliases: %v -> %v", e.Aliases, d.Aliases)
+		out.change("aliases", e.Aliases, d.Aliases)
 	}
 
-	msgs = append(msgs, diffFields("viewerCertificate", e.Cert, d.Cert)...)
-	msgs = append(msgs, diffFields("logging", e.Logging, d.Logging)...)
-	msgs = append(msgs, diffFields("defaultCacheBehavior", e.DefaultBehavior, d.DefaultBehavior)...)
-	msgs = append(msgs, diffOrigins(e.Origins, d.Origins)...)
+	// certificate settings are top-level YAML keys (certificate, minimumProtocolVersion,
+	// sslSupportMethod), so their Change paths carry no prefix
+	out.merge(diffFields("viewerCertificate", "", e.Cert, d.Cert))
+	out.merge(diffFields("logging", "logging", e.Logging, d.Logging))
+	out.merge(diffFields("defaultCacheBehavior", "defaultCacheBehavior", e.DefaultBehavior, d.DefaultBehavior))
+	out.merge(diffOrigins(e.Origins, d.Origins))
 
 	if !reflect.DeepEqual(e.Errors, d.Errors) {
-		msgs = append(msgs, fmt.Sprintf("customErrorResponses: %+v -> %+v", e.Errors, d.Errors))
+		out.msg("customErrorResponses: %+v -> %+v", e.Errors, d.Errors)
+		out.changes = append(out.changes, diffErrorResponses(e.Errors, d.Errors)...)
 	}
 
-	return msgs
+	return out.msgs, out.changes
 }
 
 // webACLDisplay renders a web ACL value for diff messages: the user-supplied name when
@@ -1397,10 +1452,11 @@ func webACLDisplay(display map[string]string, v string) string {
 	return v
 }
 
-// diffOrigins returns per-origin, per-field difference messages between the existing and
-// desired origin snapshots (both sorted by id).
-func diffOrigins(existing, desired []originSnapshot) []string {
-	var msgs []string
+// diffOrigins returns per-origin, per-field differences between the existing and desired
+// origin snapshots (both sorted by id). Change paths are origins[<id>].<setting>; an
+// origin added or removed whole is one Change on origins[<id>].
+func diffOrigins(existing, desired []originSnapshot) configDiff {
+	var out configDiff
 
 	em := make(map[string]originSnapshot, len(existing))
 	for _, o := range existing {
@@ -1424,20 +1480,72 @@ func diffOrigins(existing, desired []originSnapshot) []string {
 		e, eok := em[id]
 		d, dok := dm[id]
 		label := fmt.Sprintf("origin %q", id)
+		path := fmt.Sprintf("origins[%s]", id)
 		switch {
 		case !dok:
-			msgs = append(msgs, label+": removed")
+			out.msg("%s: removed", label)
+			out.change(path, originSummary(e), "")
 		case !eok:
-			msgs = append(msgs, fmt.Sprintf("%s: added (type %s, domain %s)", label, originSnapshotType(d), d.DomainName))
+			out.msg("%s: added (type %s, domain %s)", label, originSnapshotType(d), d.DomainName)
+			out.change(path, "", originSummary(d))
 		default:
 			if et, dt := originSnapshotType(e), originSnapshotType(d); et != dt {
-				msgs = append(msgs, fmt.Sprintf("%s: type: %s -> %s", label, et, dt))
+				out.msg("%s: type: %s -> %s", label, et, dt)
+				out.change(path+".type", et, dt)
 				continue
 			}
-			msgs = append(msgs, diffFields(label, e, d)...)
+			out.merge(diffFields(label, path, e, d))
 		}
 	}
-	return msgs
+	return out
+}
+
+// originSummary renders a whole origin as a Change value when it is added or removed.
+func originSummary(o originSnapshot) string {
+	return fmt.Sprintf("type=%s,target=%s", originSnapshotType(o), o.DomainName)
+}
+
+// diffErrorResponses records one Change per custom error response setting, keyed by
+// error code, beside the single customErrorResponses message.
+func diffErrorResponses(existing, desired []errorSnapshot) []Change {
+	em := make(map[int32]errorSnapshot, len(existing))
+	for _, e := range existing {
+		em[e.ErrorCode] = e
+	}
+	dm := make(map[int32]errorSnapshot, len(desired))
+	for _, d := range desired {
+		dm[d.ErrorCode] = d
+	}
+
+	codeSet := make(map[int32]struct{}, len(em)+len(dm))
+	for code := range em {
+		codeSet[code] = struct{}{}
+	}
+	for code := range dm {
+		codeSet[code] = struct{}{}
+	}
+
+	var out configDiff
+	for _, code := range slices.Sorted(maps.Keys(codeSet)) {
+		path := fmt.Sprintf("customErrorResponses[%d]", code)
+		e, eok := em[code]
+		d, dok := dm[code]
+		switch {
+		case !dok:
+			out.change(path, errorResponseSummary(e), "")
+		case !eok:
+			out.change(path, "", errorResponseSummary(d))
+		default:
+			out.merge(diffFields("", path, e, d))
+		}
+	}
+	return out.changes
+}
+
+// errorResponseSummary renders a whole custom error response as a Change value when it
+// is added or removed.
+func errorResponseSummary(e errorSnapshot) string {
+	return fmt.Sprintf("responseCode=%s,responsePagePath=%s,errorCachingMinTTL=%d", e.ResponseCode, e.ResponsePagePath, e.ErrorCachingMinTTL)
 }
 
 // originSnapshotType names the origin kind of a snapshot.
@@ -1454,38 +1562,65 @@ func originSnapshotType(o originSnapshot) string {
 }
 
 // diffFields compares two snapshot structs of the same type field by field (following
-// pointers into nested snapshot structs) and returns a "<label>: <field>: <a> -> <b>"
-// message per differing leaf field. Field names are rendered lower-camel-cased to match
-// the YAML config keys.
-func diffFields[T any](label string, e, d T) []string {
-	return diffValues(label, reflect.ValueOf(e), reflect.ValueOf(d))
+// pointers into nested snapshot structs). Each differing leaf yields a
+// "<label>: <field>: <a> -> <b>" message, with field names lower-camel-cased to match
+// the YAML config keys, and a Change whose Field is the leaf's YAML path under path
+// (see changeFieldPath).
+func diffFields[T any](label, path string, e, d T) configDiff {
+	return diffValues(label, path, reflect.ValueOf(e), reflect.ValueOf(d))
 }
 
-func diffValues(label string, e, d reflect.Value) []string {
-	var msgs []string
+func diffValues(label, path string, e, d reflect.Value) configDiff {
+	var out configDiff
 	for i := 0; i < e.NumField(); i++ {
 		f := e.Type().Field(i)
 		fieldLabel := fmt.Sprintf("%s: %s", label, lowerCamel(f.Name))
+		fieldPath := changeFieldPath(path, f)
 		ev, dv := e.Field(i), d.Field(i)
 
 		if f.Type.Kind() == reflect.Pointer {
 			switch {
 			case ev.IsNil() && dv.IsNil():
 			case ev.IsNil():
-				msgs = append(msgs, fmt.Sprintf("%s: added (%+v)", fieldLabel, dv.Elem().Interface()))
+				out.msg("%s: added (%+v)", fieldLabel, dv.Elem().Interface())
+				out.change(fieldPath, "", fmt.Sprintf("%+v", dv.Elem().Interface()))
 			case dv.IsNil():
-				msgs = append(msgs, fieldLabel+": removed")
+				out.msg("%s: removed", fieldLabel)
+				out.change(fieldPath, fmt.Sprintf("%+v", ev.Elem().Interface()), "")
 			default:
-				msgs = append(msgs, diffValues(fieldLabel, ev.Elem(), dv.Elem())...)
+				out.merge(diffValues(fieldLabel, fieldPath, ev.Elem(), dv.Elem()))
 			}
 			continue
 		}
 
 		if !reflect.DeepEqual(ev.Interface(), dv.Interface()) {
-			msgs = append(msgs, fmt.Sprintf("%s: %v -> %v", fieldLabel, ev.Interface(), dv.Interface()))
+			out.msg("%s: %v -> %v", fieldLabel, ev.Interface(), dv.Interface())
+			out.change(fieldPath, ev.Interface(), dv.Interface())
 		}
 	}
-	return msgs
+	return out
+}
+
+// changeFieldPath returns the YAML path of a snapshot field under parent, from the
+// field's `field` tag: a name is appended to parent; "" inlines the field, so its
+// children sit directly under parent the way the per-type origin settings do in YAML;
+// "-" marks a field with no YAML setting of its own and returns "" so no Change is
+// recorded. An untagged field uses its lower-camel name, which already matches its
+// YAML key.
+func changeFieldPath(parent string, f reflect.StructField) string {
+	name, tagged := f.Tag.Lookup("field")
+	switch {
+	case tagged && name == "-":
+		return ""
+	case tagged && name == "":
+		return parent
+	case !tagged:
+		name = lowerCamel(f.Name)
+	}
+	if parent == "" {
+		return name
+	}
+	return parent + "." + name
 }
 
 // lowerCamel converts an exported Go field name to its YAML-ish lower-camel form
@@ -1514,7 +1649,9 @@ func lowerCamel(s string) string {
 
 // distSnapshot is a normalized, comparable view of the managed fields of a
 // DistributionConfig. Slices are sorted (where order is not significant) so that
-// reflect.DeepEqual compares by value rather than ordering.
+// reflect.DeepEqual compares by value rather than ordering. The nested snapshots carry
+// a `field` tag wherever the Go name does not lower-camel to the YAML key the setting is
+// written under (see changeFieldPath).
 type distSnapshot struct {
 	Comment           string
 	Enabled           bool
@@ -1532,10 +1669,10 @@ type distSnapshot struct {
 }
 
 type certSnapshot struct {
-	DefaultCert bool
-	ACMArn      string
-	MinProtocol string
-	SSLMethod   string
+	DefaultCert bool   `field:"-"` // implied by certificate being set or not
+	ACMArn      string `field:"certificate"`
+	MinProtocol string `field:"minimumProtocolVersion"`
+	SSLMethod   string `field:"sslSupportMethod"`
 }
 
 type loggingSnapshot struct {
@@ -1554,36 +1691,36 @@ type behaviorSnapshot struct {
 	OriginRequestPolicyId   string
 	ResponseHeadersPolicyId string
 	Compress                bool
-	Functions               []string // "eventType=arn", sorted
+	Functions               []string `field:"functionAssociations"` // "eventType=arn", sorted
 }
 
 type originSnapshot struct {
-	Id                        string
-	DomainName                string
-	OriginPath                string
+	Id                        string `field:"-"`      // the map key; never differs within one origin
+	DomainName                string `field:"target"` // derived from target; displays as the target
+	OriginPath                string `field:"path"`
 	ConnectionAttempts        int32
 	ConnectionTimeout         int32
 	ResponseCompletionTimeout int32
 	OriginAccessControlId     string
-	CustomHeaders             []string // "name=value", sorted
-	Vpc                       *vpcSnapshot
-	Custom                    *customOriginSnapshot
-	S3                        *s3OriginSnapshot
+	CustomHeaders             []string              // "name=value", sorted
+	Vpc                       *vpcSnapshot          `field:""`
+	Custom                    *customOriginSnapshot `field:""`
+	S3                        *s3OriginSnapshot     `field:""`
 }
 
 type vpcSnapshot struct {
-	VpcOriginId      string
-	KeepaliveTimeout int32
-	ReadTimeout      int32
+	VpcOriginId      string `field:"target"`
+	KeepaliveTimeout int32  `field:"originKeepAliveTimeout"`
+	ReadTimeout      int32  `field:"originReadTimeout"`
 }
 
 type customOriginSnapshot struct {
 	HTTPPort         int32
 	HTTPSPort        int32
-	ProtocolPolicy   string
-	SSLProtocols     []string // sorted
-	KeepaliveTimeout int32
-	ReadTimeout      int32
+	ProtocolPolicy   string   `field:"originProtocolPolicy"`
+	SSLProtocols     []string `field:"originSslProtocols"` // sorted
+	KeepaliveTimeout int32    `field:"originKeepAliveTimeout"`
+	ReadTimeout      int32    `field:"originReadTimeout"`
 }
 
 type s3OriginSnapshot struct {

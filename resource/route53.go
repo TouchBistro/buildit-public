@@ -279,6 +279,7 @@ func (r Route53Record) destroy(ctx context.Context, existing *route53types.Resou
 
 type Route53RecordDiff struct {
 	BaseResourceDiff
+	ChangeSet
 
 	routingPolicyDiff bool
 	typeDiff          bool
@@ -304,6 +305,24 @@ func (r Route53Record) Compare(ctx context.Context) (ResourceDiff, error) {
 		return nil, errors.Wrapf(err, "error fetching aws resource for %v", r.Identifier())
 	}
 
+	diffs, err := r.compareRecordSets(existings, func() (*route53types.AliasTarget, error) {
+		return r.convertToAliasTarget(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if diffs == nil {
+		return nil, nil
+	}
+	return diffs, nil
+}
+
+// compareRecordSets compares the definition with the fetched record set(s) and returns the
+// diff, or nil when nothing differs. It performs no AWS calls itself: resolveAlias is only
+// invoked when both the definition and the existing record are aliases, which is when the
+// desired alias target has to be resolved to be compared.
+func (r Route53Record) compareRecordSets(existings []route53types.ResourceRecordSet, resolveAlias func() (*route53types.AliasTarget, error)) (*Route53RecordDiff, error) {
+
 	diffs := &Route53RecordDiff{}
 
 	// existing not found, then we have a diff, record doesn't exist...
@@ -320,6 +339,7 @@ func (r Route53Record) Compare(ctx context.Context) (ResourceDiff, error) {
 		if len(existings) >= 1 && existings[0].Weight != nil {
 			diffs.Resource = existings // this points the Compare() code that some existing object(s) were found...
 			diffs.Messages = append(diffs.Messages, "existing record has weighted routing, switching to simple")
+			diffs.AddChange("routingPolicy", "weighted", "simple")
 			diffs.routingPolicyDiff = true
 			return diffs, nil
 		}
@@ -330,6 +350,7 @@ func (r Route53Record) Compare(ctx context.Context) (ResourceDiff, error) {
 		if len(existings) == 1 && existings[0].Weight == nil {
 			diffs.Resource = existings
 			diffs.Messages = append(diffs.Messages, "existing record has simple routing, switching to weighted")
+			diffs.AddChange("routingPolicy", "simple", "weighted")
 			diffs.routingPolicyDiff = true
 			return diffs, nil
 		}
@@ -354,6 +375,7 @@ func (r Route53Record) Compare(ctx context.Context) (ResourceDiff, error) {
 	if *r.Type != string(existing.Type) {
 		diffs.typeDiff = true
 		diffs.Messages = append(diffs.Messages, fmt.Sprintf("record type is different %v -> %v", string(existing.Type), *r.Type))
+		diffs.AddChange("recordType", string(existing.Type), *r.Type)
 		return diffs, nil // we ignore any further diffs, since it diesn't, since Record Type diff requires delete & recreate
 	}
 
@@ -364,12 +386,15 @@ func (r Route53Record) Compare(ctx context.Context) (ResourceDiff, error) {
 		found = true
 		diffs.aliasDiff = true
 		diffs.Messages = append(diffs.Messages, "record alias target is being removed")
+		diffs.AddChange("alias.dnsName", ChangeValue(existing.AliasTarget.DNSName), "")
+		diffs.AddChange("alias.hostedZoneId", ChangeValue(existing.AliasTarget.HostedZoneId), "")
 	} else if r.AliasType != nil && existing.AliasTarget == nil {
 		found = true
 		diffs.aliasDiff = true
 		diffs.Messages = append(diffs.Messages, "record alias target is being added")
+		diffs.AddChange("aliasType", "", ChangeValue(r.AliasType))
 	} else if r.AliasType != nil && existing.AliasTarget != nil {
-		trg, err := r.convertToAliasTarget(ctx)
+		trg, err := resolveAlias()
 		if err != nil {
 			return nil, errors.Wrapf(err, "error converting referenced resource to alias target")
 		}
@@ -381,6 +406,15 @@ func (r Route53Record) Compare(ctx context.Context) (ResourceDiff, error) {
 			diffs.Messages = append(diffs.Messages, fmt.Sprintf("record alias target is different %v/%v(%v) -> %v/%v(%v)",
 				*existing.AliasTarget.HostedZoneId, *existing.AliasTarget.DNSName, existing.AliasTarget.EvaluateTargetHealth,
 				*trg.HostedZoneId, *trg.DNSName, trg.EvaluateTargetHealth))
+			if *trg.DNSName != *existing.AliasTarget.DNSName {
+				diffs.AddChange("alias.dnsName", *existing.AliasTarget.DNSName, *trg.DNSName)
+			}
+			if *trg.HostedZoneId != *existing.AliasTarget.HostedZoneId {
+				diffs.AddChange("alias.hostedZoneId", *existing.AliasTarget.HostedZoneId, *trg.HostedZoneId)
+			}
+			if trg.EvaluateTargetHealth != existing.AliasTarget.EvaluateTargetHealth {
+				diffs.AddChange("alias.evaluateTargetHealth", ChangeValue(existing.AliasTarget.EvaluateTargetHealth), ChangeValue(trg.EvaluateTargetHealth))
+			}
 		}
 	} else {
 		// TTL & destination diffs only come into play if neither defined, nor existing records are not alias records
@@ -390,6 +424,7 @@ func (r Route53Record) Compare(ctx context.Context) (ResourceDiff, error) {
 			found = true
 			diffs.ttlDiff = true
 			diffs.Messages = append(diffs.Messages, fmt.Sprintf("record alias ttl is different %v -> %v", *existing.TTL, *r.TTL))
+			diffs.AddChange("ttl", ChangeValue(existing.TTL), ChangeValue(r.TTL))
 		}
 
 		// destination
@@ -397,12 +432,14 @@ func (r Route53Record) Compare(ctx context.Context) (ResourceDiff, error) {
 			found = true
 			diffs.destDiff = true
 			diffs.Messages = append(diffs.Messages, "record destinations are different")
+			diffs.AddChange("destinations", recordValues(existing.ResourceRecords), ChangeValue(r.Destinations))
 		} else {
 			for i, d := range r.Destinations {
 				if d != *existing.ResourceRecords[i].Value {
 					found = true
 					diffs.destDiff = true
 					diffs.Messages = append(diffs.Messages, "record destinations are different")
+					diffs.AddChange("destinations", recordValues(existing.ResourceRecords), ChangeValue(r.Destinations))
 					break
 				}
 			}
@@ -418,6 +455,7 @@ func (r Route53Record) Compare(ctx context.Context) (ResourceDiff, error) {
 			diffs.weightDiff = true
 			diffs.Messages = append(diffs.Messages, fmt.Sprintf("record routing policy weight is different %v -> %v",
 				util.CoalesceComparable(existing.Weight, 0), r.Policy.Weight))
+			diffs.AddChange("routingPolicy.weight", ChangeValue(util.CoalesceComparable(existing.Weight, 0)), ChangeValue(r.Policy.Weight))
 		}
 
 		if r.Policy.SetIdentifier != util.Coalesce(existing.SetIdentifier, "") {
@@ -433,6 +471,15 @@ func (r Route53Record) Compare(ctx context.Context) (ResourceDiff, error) {
 	}
 
 	return diffs, nil
+}
+
+// recordValues renders a record set's values the way ChangeValue renders a destinations list.
+func recordValues(records []route53types.ResourceRecord) string {
+	values := make([]string, 0, len(records))
+	for _, rr := range records {
+		values = append(values, ChangeValue(rr.Value))
+	}
+	return ChangeValue(values)
 }
 
 // fetchExisting, fetches the existing record(s) that match the current definition.

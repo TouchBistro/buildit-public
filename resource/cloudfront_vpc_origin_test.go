@@ -148,8 +148,9 @@ func TestCompareVpcOriginEndpointConfig_NoChanges(t *testing.T) {
 	desired, err := r.generateEndpointConfig(context.Background())
 	require.NoError(t, err)
 
-	msgs := compareVpcOriginEndpointConfig(*desired, *desired)
+	msgs, changes := compareVpcOriginEndpointConfig(*desired, *desired)
 	assert.Empty(t, msgs)
+	assert.Empty(t, changes)
 }
 
 func TestCompareVpcOriginEndpointConfig_SslProtocolOrderInsensitive(t *testing.T) {
@@ -165,7 +166,9 @@ func TestCompareVpcOriginEndpointConfig_SslProtocolOrderInsensitive(t *testing.T
 			Items:    []cftypes.SslProtocol{cftypes.SslProtocolTLSv11, cftypes.SslProtocolTLSv12},
 		},
 	}
-	assert.Empty(t, compareVpcOriginEndpointConfig(existing, desired))
+	msgs, changes := compareVpcOriginEndpointConfig(existing, desired)
+	assert.Empty(t, msgs)
+	assert.Empty(t, changes)
 }
 
 func TestCompareVpcOriginEndpointConfig_Differences(t *testing.T) {
@@ -183,13 +186,92 @@ func TestCompareVpcOriginEndpointConfig_Differences(t *testing.T) {
 		Items:    []cftypes.SslProtocol{cftypes.SslProtocolTLSv11},
 	}
 
-	msgs := compareVpcOriginEndpointConfig(existing, *desired)
+	msgs, changes := compareVpcOriginEndpointConfig(existing, *desired)
 	require.Len(t, msgs, 5)
 	assert.Contains(t, msgs[0], "target:")
 	assert.Contains(t, msgs[1], "httpPort: 8080 -> 80")
 	assert.Contains(t, msgs[2], "httpsPort: 8443 -> 443")
 	assert.Contains(t, msgs[3], `originProtocolPolicy: "match-viewer" -> "https-only"`)
 	assert.Contains(t, msgs[4], "originSslProtocols: [TLSv1.1] -> [TLSv1.2]")
+
+	// One Change per message, in the same order, keyed by the buildit.yml field.
+	assert.Equal(t, []Change{
+		{Field: "target", From: "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/old-alb/abc123", To: testLBArn},
+		{Field: "httpPort", From: "8080", To: "80"},
+		{Field: "httpsPort", From: "8443", To: "443"},
+		{Field: "originProtocolPolicy", From: "match-viewer", To: "https-only"},
+		{Field: "originSslProtocol", From: "TLSv1.1", To: "TLSv1.2"},
+	}, changes)
+}
+
+func TestCompareVpcOriginEndpointConfig_SingleChange(t *testing.T) {
+	r := testVpcOrigin()
+	desired, err := r.generateEndpointConfig(context.Background())
+	require.NoError(t, err)
+
+	existing := *desired
+	existing.HTTPSPort = aws.Int32(8443)
+
+	msgs, changes := compareVpcOriginEndpointConfig(existing, *desired)
+	assert.Equal(t, []string{"httpsPort: 8443 -> 443"}, msgs)
+	assert.Equal(t, []Change{{Field: "httpsPort", From: "8443", To: "443"}}, changes)
+}
+
+func TestCompareVpcOriginEndpointConfig_SslProtocolListChange(t *testing.T) {
+	existing := cftypes.VpcOriginEndpointConfig{
+		OriginSslProtocols: &cftypes.OriginSslProtocols{
+			Quantity: aws.Int32(2),
+			Items:    []cftypes.SslProtocol{cftypes.SslProtocolTLSv12, cftypes.SslProtocolTLSv11},
+		},
+	}
+	desired := cftypes.VpcOriginEndpointConfig{
+		OriginSslProtocols: &cftypes.OriginSslProtocols{
+			Quantity: aws.Int32(1),
+			Items:    []cftypes.SslProtocol{cftypes.SslProtocolTLSv12},
+		},
+	}
+
+	msgs, changes := compareVpcOriginEndpointConfig(existing, desired)
+	assert.Equal(t, []string{"originSslProtocols: [TLSv1.1 TLSv1.2] -> [TLSv1.2]"}, msgs)
+	assert.Equal(t, []Change{{Field: "originSslProtocol", From: "TLSv1.1,TLSv1.2", To: "TLSv1.2"}}, changes)
+}
+
+func TestCloudfrontVpcOriginDiff_TagChanges(t *testing.T) {
+	awsTags := map[string]string{"env": "old-env", "team": "example-team"}
+	desiredTags := map[string]string{"env": "new-env", "owner": "example-owner"}
+
+	tagDiff := TagDiffForContext(context.Background(), awsTags, desiredTags)
+	require.True(t, tagDiff.HasChanges())
+
+	diffs := &CloudfrontVpcOriginDiff{}
+	diffs.Messages = append(diffs.Messages, TagDiffSummary(awsTags, tagDiff)...)
+	diffs.AddChanges(TagChanges(awsTags, tagDiff)...)
+
+	var detailed DetailedResourceDiff = diffs
+	assert.Equal(t, []Change{
+		{Field: "tags.env", From: "old-env", To: "new-env"},
+		{Field: "tags.team", From: "example-team", To: ""},
+		{Field: "tags.owner", From: "", To: "example-owner"},
+	}, detailed.Changes())
+	assert.Equal(t, diffs.Messages, detailed.Differences())
+}
+
+func TestCloudfrontVpcOriginDiff_NoChangesWhenIdentical(t *testing.T) {
+	r := testVpcOrigin()
+	desired, err := r.generateEndpointConfig(context.Background())
+	require.NoError(t, err)
+
+	diffs := &CloudfrontVpcOriginDiff{}
+	msgs, changes := compareVpcOriginEndpointConfig(*desired, *desired)
+	diffs.Messages = append(diffs.Messages, msgs...)
+	diffs.AddChanges(changes...)
+
+	tags := map[string]string{"env": "example-env"}
+	tagDiff := TagDiffForContext(context.Background(), tags, tags)
+	require.False(t, tagDiff.HasChanges())
+
+	assert.Empty(t, diffs.Differences())
+	assert.Empty(t, diffs.Changes())
 }
 
 func TestCloudfrontVpcOrigin_YAMLUnmarshal(t *testing.T) {

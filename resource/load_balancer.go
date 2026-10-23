@@ -33,7 +33,7 @@ const (
 // LoadBalancer resource,
 // Currently only Application Load Balancers (ALB) & IPV4 address type are supported
 type LoadBalancer struct {
-	BaseResource `yaml:",inline"`
+	BaseResource       `yaml:",inline"`
 	Name               string            `yaml:"-"`
 	SubnetNames        []string          `yaml:"subnetNames"`
 	SecurityGroupNames []string          `yaml:"securityGroupNames"`
@@ -300,6 +300,7 @@ func (lb LoadBalancer) Destroy(ctx context.Context) error {
 // LoadBalancerDiff
 type LoadBalancerDiff struct {
 	BaseResourceDiff
+	ChangeSet
 
 	loadbalancerArn    string
 	schemeDiff         bool
@@ -318,6 +319,25 @@ type LoadBalancerDiff struct {
 	tagDiff            util.TagDiffResult
 }
 
+// listenerPlan is the listener half of a load balancer comparison, keyed by
+// PROTOCOL:PORT. Compare fills it because the per-listener diff of a matched
+// listener needs AWS; compareLoadBalancer only renders it.
+type listenerPlan struct {
+	add     map[string]LBListener
+	del     map[string]elbv2types.Listener
+	upd     map[*LBListener]*LoadBalancerListenerDiff
+	updates []listenerUpdate
+}
+
+// listenerUpdate is one matched listener whose settings differ, with the
+// messages its own diff produced.
+type listenerUpdate struct {
+	key      string
+	port     int32
+	messages []string
+	changes  []Change
+}
+
 // Compare fetches the existing load balancer, and if it exists
 // checks if this resource is equal to the corresponding AWS LoadBalancer
 func (lb LoadBalancer) Compare(ctx context.Context) (ResourceDiff, error) {
@@ -327,31 +347,13 @@ func (lb LoadBalancer) Compare(ctx context.Context) (ResourceDiff, error) {
 		return nil, err
 	}
 
-	diffs := &LoadBalancerDiff{}
 	if existing == nil { //not found
+		diffs := &LoadBalancerDiff{}
 		diffs.Messages = append(diffs.Messages, "load balancer does not exist")
 		return diffs, nil
 	}
 
-	diffs.Resource = &existing
-
-	diff := false
 	elbClient := client.ELB(ctx, lb.Context.ProviderName)
-	diffs.loadbalancerArn = *existing.LoadBalancerArn
-
-	// scheme
-	if existing.Scheme != elbv2types.LoadBalancerSchemeEnum(*lb.Scheme) {
-		diff = true
-		diffs.schemeDiff = true
-		diffs.Messages = append(diffs.Messages, "load balancer schema is different")
-	}
-
-	// type
-	if existing.Type != elbv2types.LoadBalancerTypeEnum(*lb.Type) {
-		diff = true
-		diffs.typeDiff = true
-		diffs.Messages = append(diffs.Messages, "load balancer type is different")
-	}
 
 	// subnet Ids
 	subnetIds, err := awsw.NewEC2(ctx, lb.Context.ProviderName).SubnetIdsByNames(ctx, lb.SubnetNames)
@@ -359,30 +361,10 @@ func (lb LoadBalancer) Compare(ctx context.Context) (ResourceDiff, error) {
 		return nil, errors.Wrap(err, "failed listing security group ids for lb")
 	}
 
-	existingSubnetIds := make([]*string, 0)
-	for _, az := range existing.AvailabilityZones {
-		existingSubnetIds = append(existingSubnetIds, az.SubnetId)
-	}
-
-	diffSubnets := util.DiffStringPtrSlices(existingSubnetIds, aws.StringSlice(subnetIds))
-	if diffSubnets {
-		diff = true
-		diffs.subnetsDiff = true
-		diffs.subnetIds = subnetIds
-	}
-
 	// security groups
-	existingSecurityGroupIds := existing.SecurityGroups
 	securityGroupIds, err := awsw.NewEC2(ctx, lb.Context.ProviderName).SecurityGroupIdsByNames(ctx, nil, lb.SecurityGroupNames)
 	if err != nil {
 		return nil, errors.Wrap(err, "error listing security group ids")
-	}
-
-	diffSgs := util.DiffStringSlices(existingSecurityGroupIds, securityGroupIds)
-	if diffSgs {
-		diff = true
-		diffs.securityGroupsDiff = true
-		diffs.securityGroupIds = securityGroupIds
 	}
 
 	//Attributes
@@ -393,18 +375,9 @@ func (lb LoadBalancer) Compare(ctx context.Context) (ResourceDiff, error) {
 		return nil, errors.Wrap(err, "error fetching load balancer attributes")
 	}
 
-	existingAttrs := attr.Attributes
 	existingAttrsHash := make(map[string]string)
-
-	for _, attr := range existingAttrs {
+	for _, attr := range attr.Attributes {
 		existingAttrsHash[*attr.Key] = *attr.Value
-	}
-
-	diffs.attributesToAdd = loadBalancerAttributeUpserts(existingAttrsHash, lb.Attributes)
-	if len(diffs.attributesToAdd) > 0 {
-		diff = true
-		diffs.attributesDiffs = true
-		diffs.Messages = append(diffs.Messages, fmt.Sprintf("%v attributes to be updated for load balancer %v - %v", len(diffs.attributesToAdd), lb.Identifier(), diffs.attributesToAdd))
 	}
 
 	//listeners
@@ -425,21 +398,22 @@ func (lb LoadBalancer) Compare(ctx context.Context) (ResourceDiff, error) {
 		return nil, errors.Wrap(err, "error fetching listeners for the load balancer")
 	}
 
-	del := make(map[string]elbv2types.Listener) //list of listeners to delete
-	add := make(map[string]LBListener)          //list of listeners to add
-	upd := make(map[*LBListener]*LoadBalancerListenerDiff)
-	updKeys := make([]string, 0)
+	plan := listenerPlan{
+		del: make(map[string]elbv2types.Listener), //list of listeners to delete
+		add: make(map[string]LBListener),          //list of listeners to add
+		upd: make(map[*LBListener]*LoadBalancerListenerDiff),
+	}
 
 	for _, l := range respListener.Listeners {
 		k := fmt.Sprintf("%v:%v", strings.ToUpper(string(l.Protocol)), *l.Port)
-		del[k] = l
+		plan.del[k] = l
 	}
 	for _, l := range lb.Listeners {
 		k := fmt.Sprintf("%v:%v", strings.ToUpper(l.Protocol), l.Port)
-		add[k] = *l
+		plan.add[k] = *l
 	}
-	for k, old := range del {
-		if new, ok := add[k]; ok {
+	for k, old := range plan.del {
+		if new, ok := plan.add[k]; ok {
 			newRef := &new
 			// if a listener already exists, we check if it's the same
 			new.LoadBalancerARN = *old.LoadBalancerArn
@@ -454,16 +428,103 @@ func (lb LoadBalancer) Compare(ctx context.Context) (ResourceDiff, error) {
 				if !ok {
 					return nil, errors.Errorf("unexpected listener diff type %T", diff)
 				}
-				//add the listeners diff msgs to this
-				diffs.Messages = append(diffs.Messages, formatListenerDiffMessages(k, listenerDiff.Differences())...)
-				upd[newRef] = listenerDiff
-				updKeys = append(updKeys, k)
+				plan.upd[newRef] = listenerDiff
+				plan.updates = append(plan.updates, listenerUpdate{key: k, port: new.Port, messages: listenerDiff.Differences(), changes: listenerDiff.Changes()})
 			}
-			delete(del, k)
-			delete(add, k)
+			delete(plan.del, k)
+			delete(plan.add, k)
 		}
 	}
 
+	// tags
+	awsTags, err := awsw.NewELB(ctx, lb.Context.ProviderName).GetResourceTags(ctx, *existing.LoadBalancerArn)
+	if err != nil {
+		return nil, err
+	}
+
+	diffs := lb.compareLoadBalancer(ctx, existing, subnetIds, securityGroupIds, existingAttrsHash, plan, awsTags)
+	if diffs == nil {
+		return nil, nil
+	}
+
+	return diffs, nil
+}
+
+// compareLoadBalancer builds the diff between this definition and an existing
+// load balancer from values Compare already fetched: the desired subnet and
+// security group ids, the current attributes, the listener plan and the
+// current tags. It makes no AWS calls, so tests can assert its messages and
+// changes directly. It returns nil when nothing differs.
+func (lb LoadBalancer) compareLoadBalancer(ctx context.Context, existing *elbv2types.LoadBalancer, subnetIds, securityGroupIds []string, existingAttrs map[string]string, listeners listenerPlan, awsTags map[string]string) *LoadBalancerDiff {
+
+	diffs := &LoadBalancerDiff{}
+	diffs.Resource = &existing
+
+	diff := false
+	diffs.loadbalancerArn = *existing.LoadBalancerArn
+
+	// scheme
+	if existing.Scheme != elbv2types.LoadBalancerSchemeEnum(*lb.Scheme) {
+		diff = true
+		diffs.schemeDiff = true
+		diffs.Messages = append(diffs.Messages, "load balancer schema is different")
+		diffs.AddChange("scheme", string(existing.Scheme), ChangeValue(lb.Scheme))
+	}
+
+	// type
+	if existing.Type != elbv2types.LoadBalancerTypeEnum(*lb.Type) {
+		diff = true
+		diffs.typeDiff = true
+		diffs.Messages = append(diffs.Messages, "load balancer type is different")
+		diffs.AddChange("type", string(existing.Type), ChangeValue(lb.Type))
+	}
+
+	// subnet Ids
+	existingSubnetIds := make([]*string, 0)
+	for _, az := range existing.AvailabilityZones {
+		existingSubnetIds = append(existingSubnetIds, az.SubnetId)
+	}
+
+	diffSubnets := util.DiffStringPtrSlices(existingSubnetIds, aws.StringSlice(subnetIds))
+	if diffSubnets {
+		diff = true
+		diffs.subnetsDiff = true
+		diffs.subnetIds = subnetIds
+		diffs.AddChange("subnetNames", ChangeValue(aws.ToStringSlice(existingSubnetIds)), ChangeValue(subnetIds))
+	}
+
+	// security groups
+	diffSgs := util.DiffStringSlices(existing.SecurityGroups, securityGroupIds)
+	if diffSgs {
+		diff = true
+		diffs.securityGroupsDiff = true
+		diffs.securityGroupIds = securityGroupIds
+		diffs.AddChange("securityGroupNames", ChangeValue(existing.SecurityGroups), ChangeValue(securityGroupIds))
+	}
+
+	//Attributes
+	diffs.attributesToAdd = loadBalancerAttributeUpserts(existingAttrs, lb.Attributes)
+	if len(diffs.attributesToAdd) > 0 {
+		diff = true
+		diffs.attributesDiffs = true
+		diffs.Messages = append(diffs.Messages, fmt.Sprintf("%v attributes to be updated for load balancer %v - %v", len(diffs.attributesToAdd), lb.Identifier(), diffs.attributesToAdd))
+		for _, key := range util.StringMap(diffs.attributesToAdd).Keys() {
+			diffs.AddChange("attributes."+key, existingAttrs[key], diffs.attributesToAdd[key])
+		}
+	}
+
+	//listeners
+	updKeys := make([]string, 0, len(listeners.updates))
+	for _, u := range listeners.updates {
+		//add the listeners diff msgs to this
+		diffs.Messages = append(diffs.Messages, formatListenerDiffMessages(u.key, u.messages)...)
+		// the listener diff records its own changes in listener vocabulary
+		// (sslPolicy, rules[0], tags.env); fold them under this listener's path.
+		diffs.AddChanges(prefixChanges(listenerField(u.port)+".", u.changes)...)
+		updKeys = append(updKeys, u.key)
+	}
+
+	add, del, upd := listeners.add, listeners.del, listeners.upd
 	diffs.listenerDiffs = len(del) > 0 || len(add) > 0 || len(upd) > 0
 	if diffs.listenerDiffs {
 		diff = true
@@ -473,6 +534,9 @@ func (lb LoadBalancer) Compare(ctx context.Context) (ResourceDiff, error) {
 		if len(add) > 0 {
 			keys := sortedListenerKeys(add)
 			diffs.Messages = append(diffs.Messages, fmt.Sprintf("%v listener(s) to be added to load balancer %v: %v", len(add), lb.Identifier(), strings.Join(keys, ", ")))
+			for _, k := range keys {
+				diffs.AddChange(listenerField(add[k].Port), "", describeListener(add[k]))
+			}
 		}
 		if len(upd) > 0 {
 			slices.Sort(updKeys)
@@ -481,26 +545,44 @@ func (lb LoadBalancer) Compare(ctx context.Context) (ResourceDiff, error) {
 		if len(del) > 0 {
 			keys := sortedListenerKeys(del)
 			diffs.Messages = append(diffs.Messages, fmt.Sprintf("%v listener(s) to be removed from load balancer %v: %v", len(del), lb.Identifier(), strings.Join(keys, ", ")))
+			for _, k := range keys {
+				diffs.AddChange(listenerField(aws.ToInt32(del[k].Port)), describeAWSListener(del[k]), "")
+			}
 		}
 	}
 
 	// tags
-	awsTags, err := awsw.NewELB(ctx, lb.Context.ProviderName).GetResourceTags(ctx, *existing.LoadBalancerArn)
-	if err != nil {
-		return nil, err
-	}
 	if tagDiff := TagDiffForContext(ctx, awsTags, lb.Tags); tagDiff.HasChanges() {
 		diff = true
 		diffs.tagsDiff = true
 		diffs.tagDiff = tagDiff
 		diffs.Messages = append(diffs.Messages, TagDiffSummary(awsTags, diffs.tagDiff)...)
+		diffs.AddChanges(TagChanges(awsTags, tagDiff)...)
 	}
 
 	if !diff {
-		return nil, nil
+		return nil
 	}
 
-	return diffs, nil
+	return diffs
+}
+
+// listenerField is the YAML path of a listener in a Change: listeners are a
+// list in the definition, and the port is what identifies one to the user.
+func listenerField(port int32) string {
+	return fmt.Sprintf("listeners[%d]", port)
+}
+
+// describeListener renders a definition listener for a Change value:
+// "HTTPS forward example-tg", "HTTP redirect".
+func describeListener(l LBListener) string {
+	return strings.TrimSpace(strings.ToUpper(l.Protocol) + " " + describeActions(l.DefaultRule.Actions))
+}
+
+// describeAWSListener is describeListener for an existing listener. Target
+// groups are left out: AWS only has their ARNs, not the names the user wrote.
+func describeAWSListener(l elbv2types.Listener) string {
+	return strings.TrimSpace(strings.ToUpper(string(l.Protocol)) + " " + describeAWSActions(l.DefaultActions))
 }
 
 // fetchExisting checks if the load balancer already exists

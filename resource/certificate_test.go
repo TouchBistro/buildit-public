@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	acmtypes "github.com/aws/aws-sdk-go-v2/service/acm/types"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -311,5 +313,87 @@ func TestACMCertificate_CheckValidationZones_SkipsWhenExplicit(t *testing.T) {
 		c := ACMCertificate{Name: "api.example.com", SAN: []string{"*.example.io"}}
 		c.Normalize(context.Background())
 		assert.Equal(t, []string{"api.example.com", "*.example.io"}, c.discoveredDomains())
+	})
+}
+
+// compareExisting is the AWS-free half of Compare (DEVOPS-8929): beside every human message
+// it records a Change in the YAML vocabulary, From being AWS and To the definition.
+func TestACMCertificate_CompareExisting_Changes(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("san, pending validation and tag changes", func(t *testing.T) {
+		c := ACMCertificate{
+			Name:             "api.example.com",
+			SAN:              []string{"new.example.com"},
+			ValidationDomain: "default/example.com",
+			Tags:             map[string]string{"env": "new-env", "team": "example-team"},
+		}
+		c.Normalize(ctx)
+
+		existing := &acmtypes.CertificateDetail{
+			CertificateArn:          aws.String("arn:aws:acm:us-east-1:123456789012:certificate/example-cert"),
+			DomainName:              aws.String("api.example.com"),
+			SubjectAlternativeNames: []string{"api.example.com", "old.example.com"},
+			Status:                  acmtypes.CertificateStatusPendingValidation,
+		}
+		awsTags := map[string]string{"env": "old-env", "owner": "example-owner"}
+
+		diffs := &ACMCertificateDiff{}
+		assert.True(t, c.compareExisting(ctx, diffs, existing, awsTags))
+
+		assert.True(t, diffs.sansDiff)
+		assert.True(t, diffs.beingValidated)
+		assert.True(t, diffs.tagsDiff)
+		assert.False(t, diffs.domainDiff)
+		assert.Same(t, existing, diffs.Resource)
+
+		assert.Equal(t, []string{
+			"certificate subject alternative name (san) are different",
+			"certificate current state is validating",
+			"tag env is different: old-env -> new-env",
+			"tag owner:example-owner is removed",
+			"tag team is added: example-team",
+		}, diffs.Differences())
+
+		assert.Equal(t, []Change{
+			{Field: "san", From: "old.example.com", To: "new.example.com"},
+			{Field: "status", From: "PENDING_VALIDATION", To: "ISSUED"},
+			{Field: "tags.env", From: "old-env", To: "new-env"},
+			{Field: "tags.owner", From: "example-owner", To: ""},
+			{Field: "tags.team", From: "", To: "example-team"},
+		}, diffs.Changes())
+	})
+
+	t.Run("domain name change", func(t *testing.T) {
+		c := ACMCertificate{Name: "example-cert", DomainName: "new.example.com", ValidationDomain: "default/example.com"}
+		c.Normalize(ctx)
+
+		existing := &acmtypes.CertificateDetail{
+			DomainName:              aws.String("old.example.com"),
+			SubjectAlternativeNames: []string{"old.example.com"},
+			Status:                  acmtypes.CertificateStatusIssued,
+		}
+
+		diffs := &ACMCertificateDiff{}
+		assert.True(t, c.compareExisting(ctx, diffs, existing, c.Tags))
+		assert.True(t, diffs.domainDiff)
+		assert.Equal(t, "certificate domain name is different", diffs.Differences()[0])
+		assert.Equal(t, Change{Field: "domainName", From: "old.example.com", To: "new.example.com"}, diffs.Changes()[0])
+	})
+
+	t.Run("no difference records nothing", func(t *testing.T) {
+		c := ACMCertificate{Name: "api.example.com", SAN: []string{"www.example.com"}, ValidationDomain: "default/example.com"}
+		c.Normalize(ctx)
+
+		existing := &acmtypes.CertificateDetail{
+			DomainName:              aws.String("api.example.com"),
+			SubjectAlternativeNames: []string{"api.example.com", "www.example.com"},
+			Status:                  acmtypes.CertificateStatusIssued,
+		}
+
+		diffs := &ACMCertificateDiff{}
+		assert.False(t, c.compareExisting(ctx, diffs, existing, c.Tags))
+		assert.Empty(t, diffs.Differences())
+		assert.Empty(t, diffs.Changes())
 	})
 }
