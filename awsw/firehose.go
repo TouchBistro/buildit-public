@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/TouchBistro/awesome/providers"
 	"github.com/TouchBistro/buildit/client"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/firehose"
@@ -34,7 +33,7 @@ func (f Firehose) DeliveryStreamArnForIdentifier(ctx context.Context, identifier
 
 	firehoseService := f
 	if provider != "" {
-		if _, err := providers.Get(provider); err != nil {
+		if _, err := client.Provider(provider); err != nil {
 			return nil, errors.Wrapf(err, "provider %q not found", provider)
 		}
 		firehoseService = NewFirehose(ctx, provider)

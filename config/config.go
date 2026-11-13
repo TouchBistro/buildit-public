@@ -21,64 +21,72 @@ import (
 // Parse looks at all the supplied paths for configs, overrides, templates & includes;
 // convert them to a list of files & then merge them using the supplied templates, includes
 // & overrides, with variables subsitutions
-func Parse(ctx context.Context, opts RootOptions, tokens map[string]any) (*InternalConfig, error) {
+func Parse(ctx context.Context, opts RootOptions, tokens map[string]any) (*Config, error) {
+	ic := &Config{}
+	if err := ic.CollectFiles(opts, tokens); err != nil {
+		return nil, err
+	}
+	if err := ic.Generate(ctx, opts); err != nil {
+		return nil, err
+	}
+	return ic, nil
+}
 
+// CollectFiles reads every config file under opts.ConfigPath, rendered with the templates
+// or includes and the variable tokens, and collects each alongside whatever the Config
+// already holds; the override file, if any, replaces the current override. It is Parse
+// without Generate, so a Go-built config (NewConfig) can take files as a further source.
+func (i *Config) CollectFiles(opts RootOptions, tokens map[string]any) error {
 	// collect files from all supplied paths
 	var configFileNames []string
 	for _, path := range opts.ConfigPath {
 		f, err := util.ListMatchingFilenames(path, ".yml", ".yaml")
 		if err != nil {
-			return nil, err
+			return err
 		}
 		configFileNames = append(configFileNames, f...)
 	}
 
 	var err error
-	ic := &InternalConfig{}
-
 	if len(opts.TemplatesPath) > 0 {
 		log.Debugf("using templates for merging configs")
 		var tmpl *template.Template
 		if tmpl, err = parseTemplates(opts.TemplatesPath); err != nil {
-			return nil, err
+			return err
 		}
 		for _, fileName := range configFileNames {
 			var bc *builditConfig
 			if bc, err = genWithTemplates(fileName, tmpl, tokens); err != nil {
-				return nil, err
+				return err
 			}
-			ic.Collect(*bc)
-
+			i.Collect(*bc)
 		}
 	} else {
 		var incl []byte
 		if len(opts.IncludePath) > 0 {
 			log.Debugf("using include files for merging configs")
 			if incl, err = parseIncludes(opts.IncludePath, ".yml", ".yaml"); err != nil {
-				return nil, err
+				return err
 			}
 		}
 		for _, fileName := range configFileNames {
 			var bc *builditConfig
 			if bc, err = genWithIncludes(fileName, incl, tokens); err != nil {
-				return nil, err
+				return err
 			}
-			ic.Collect(*bc)
+			i.Collect(*bc)
 		}
 	}
 
 	// add override to the value created above
 	var oc *builditConfig
 	if oc, err = parseOverrides(opts.OverridePath, tokens); err != nil {
-		return nil, err
+		return err
 	}
-	ic._override = oc
-
-	if err := ic.Generate(ctx, opts); err != nil {
-		return nil, err
+	if oc != nil {
+		i._override = oc
 	}
-
-	return ic, nil
+	return nil
 }
 
 // parseOverrides check if there is override config supplied, if yes then we

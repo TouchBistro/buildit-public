@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/TouchBistro/awesome/providers"
 	"github.com/TouchBistro/buildit/client"
 	"github.com/TouchBistro/buildit/util"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -112,7 +111,7 @@ func (s S3) BucketArnForIdentifier(ctx context.Context, identifier string) (*str
 	s3Client := s.Client
 	if provider != "" {
 		// Verify provider exists to avoid fatal error in client.S3
-		if _, err := providers.Get(provider); err != nil {
+		if _, err := client.Provider(provider); err != nil {
 			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
 		}
 		s3Client = client.S3(ctx, provider)

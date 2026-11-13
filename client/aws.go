@@ -2,9 +2,10 @@ package client
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"time"
 
-	// _ "github.com/TouchBistro/awesome"
 	"github.com/TouchBistro/awesome/providers"
 	"github.com/TouchBistro/buildit/util"
 	"github.com/pkg/errors"
@@ -265,54 +266,144 @@ func (r *AwsProvider) Merge(other AwsProvider) {
 	}
 }
 
-// InitAwsProviders uses the supplied buildit RoleClientProviders map & initializes all named
-// providers using the aws-ccp-go (github.com/TouchBistro/awesome)
+// buildit uses two reserved provider names:
 //
-// buildit uses 2 reserved named providers:
+// default: the credentials of the context buildit runs in. The CLI builds it from the
+// --default-provider-type family of flags before the config is parsed (InitDefaultProvider).
+// A program embedding buildit registers its own with the awesome providers package, or
+// lets EnsureDefaultProvider build one from the AWS default credentials chain.
 //
-// default: this provider uses the credentials from the context that buildit is running in. this is
+// main: provisions the resources of a config and resolves the references they make. buildit
+// never writes it to the registry: Provider resolves `main` to a registered provider of that
+// name (declared in a config file, or registered by the program), else to `default`.
 //
-//	usually the AWS default credentials chain, unless the optional command line parameters
-//	account-id & role-name are supplied. In that case, it assumes the role using the default
-//	creds.
-//
-// main:    this provider is the same as `default`, unless it's explicitly defined in the
-//
-//	buildit config yaml. This provider is used to provision resources defined in that config
-//	or search for any resources that are referenced by resource definitions.
-//
-// all other providers defined in the yaml config are used for searching references during provision.
-// these references are defined using the <provider_name>/<resource_name> syntax.
-//
-// First parameter is the map of configs for provider configuration, <provider name> -> cfg
-// Optional: when `defaultAccountId` & `defaultRoleName` are supplied (via command-line arguments)
-// then the `default` provider is updated to use an AssumeRoleProvider for the corresponding role.
-func InitAwsProviders(ctx context.Context, defaultProvider AwsProvider, otherProviders map[string]*AwsProvider) error {
-	// build default provider
-	defaultProvider.Name = DefaultProvider              // ensure name is set & correct
-	_, err := defaultProvider.ToCredsProvider(ctx, nil) // since base provider is nil, a new provider type=`default` & named=`default` will be created first
-	if err != nil {
-		return errors.Wrapf(err, "error initializing provider: default")
-	}
+// Every other provider is used to look up references written as <provider>::<name>.
 
-	// buildit main provider is the same as default, unless defined in the RoleClientProvider map
-	if _, ok := otherProviders[MainProvider]; !ok {
-		_, err := providers.Clone(DefaultProvider, MainProvider)
-		if err != nil {
-			return errors.Wrapf(err, "error intializing provider: %v", MainProvider)
+// Provider resolves name against the awesome providers registry, the only source of
+// providers buildit uses: `main` is the registered `main` if there is one, else `default`;
+// every other name must be registered as is.
+func Provider(name string) (providers.CredsProvider, error) {
+	if name == MainProvider {
+		if p, err := providers.Get(MainProvider); err == nil {
+			return p, nil
 		}
-	}
-
-	// loop through the config map & initialize all providers
-	for name, config := range otherProviders {
-		config.Name = name // set provider name
-		_, err = config.ToCredsProvider(ctx, util.ToStringPtr(DefaultProvider))
+		p, err := providers.Get(DefaultProvider)
 		if err != nil {
+			return nil, errors.Wrapf(err, "AWS provider %q not found: no %q is registered and there is no %q to fall back to; register one with the awesome providers package before building the config", MainProvider, MainProvider, DefaultProvider)
+		}
+		return p, nil
+	}
+	p, err := providers.Get(name)
+	if err != nil {
+		return nil, errors.Wrapf(err, "AWS provider %q not found: declare it in the providers section of the buildit config, or register it with the awesome providers package before building the config", name)
+	}
+	return p, nil
+}
+
+// InitDefaultProvider builds the reserved `default` provider from a CLI-style AwsProvider
+// config (the --default-provider-type family of flags), replacing any registered `default`.
+// The CLI calls it before the config is parsed.
+func InitDefaultProvider(ctx context.Context, cfg AwsProvider) error {
+	cfg.Name = DefaultProvider                               // ensure name is set & correct
+	if _, err := cfg.ToCredsProvider(ctx, nil); err != nil { // nil base: a provider named `default` is created first
+		return errors.Wrapf(err, "error initializing provider: %v", DefaultProvider)
+	}
+	return nil
+}
+
+// EnsureDefaultProvider leaves a registered `default` provider as it is and otherwise
+// builds one the way the CLI does with no flags: the AWS default credentials chain in
+// us-east-1, validated with STS. It is what a program embedding buildit gets when it
+// registers no `default` of its own.
+func EnsureDefaultProvider(ctx context.Context) error {
+	if _, err := providers.Get(DefaultProvider); err == nil {
+		return nil
+	}
+	log.Debug("no `default` provider registered, building one from the AWS default credentials chain")
+	return InitDefaultProvider(ctx, AwsProvider{ProviderType: ProviderTypeDefault})
+}
+
+// CheckProviderRegistered verifies that p is the provider registered under its own name
+// in the awesome registry, which is how every service client accessor in this package
+// finds it. A provider built with providers.New*CredsProvider is registered on
+// construction, and a later one built under the same name replaces it.
+func CheckProviderRegistered(p providers.CredsProvider) error {
+	if p == nil {
+		return errors.New("nil provider supplied")
+	}
+	registered, err := providers.Get(p.Key())
+	if err != nil {
+		return errors.Wrapf(err, "provider %q is not registered; build it with the awesome providers package (providers.New*CredsProvider)", p.Key())
+	}
+	if registered != p {
+		return errors.Errorf("provider %q is not the one registered under that name; a provider built later with the same name replaced it", p.Key())
+	}
+	return nil
+}
+
+// configProviders are the names InitNamedProviders has registered in this process, so a
+// later config declaring the same provider again is not reported as replacing someone
+// else's. It grows for the life of the process on purpose: the awesome registry has no
+// unregister, so a name it holds stays registered too.
+var configProviders = struct {
+	sync.Mutex
+	names map[string]struct{}
+}{names: make(map[string]struct{})}
+
+// InitNamedProviders initializes every provider declared in the `providers:` section of a
+// config, <provider name> -> cfg, assuming roles from the `default` provider where needed.
+// A declared provider replaces a registered one of the same name; that is logged as a
+// warning unless the registered one came from a config too.
+func InitNamedProviders(ctx context.Context, cfgs map[string]*AwsProvider) error {
+	configProviders.Lock()
+	defer configProviders.Unlock()
+	for name, cfg := range cfgs {
+		if _, registered := configProviders.names[name]; !registered {
+			if _, err := providers.Get(name); err == nil {
+				log.WithField("provider", name).Warn("provider declared in the config replaces a registered provider of the same name")
+			}
+		}
+		cfg.Name = name // set provider name
+		if _, err := cfg.ToCredsProvider(ctx, util.ToStringPtr(DefaultProvider)); err != nil {
 			return errors.Wrapf(err, "error initializing provider: %v", name)
 		}
+		configProviders.names[name] = struct{}{}
 	}
-
 	return nil
+}
+
+const (
+	// DefaultRetries and DefaultBackoff apply when the context carries no util.RETRY /
+	// util.BACKOFF value, so a library consumer that never set them still gets the CLI's
+	// defaults instead of a panic.
+	DefaultRetries = 3
+	DefaultBackoff = 20
+)
+
+// retryerFor builds the retryer for a service client from the retry values on ctx,
+// falling back to the defaults above.
+func retryerFor(ctx context.Context) *retry.Standard {
+	return customRetry(
+		ctxInt(ctx, util.RETRY, DefaultRetries),
+		ctxInt(ctx, util.BACKOFF, DefaultBackoff),
+	)
+}
+
+// ctxInt returns the int stored under key, or fallback when the key is absent. A value
+// that is present but not an int is a caller bug (ContextWithRetryPolicy is the typed
+// way to set these), so it is reported rather than silently replaced.
+func ctxInt(ctx context.Context, key any, fallback int) int {
+	v := ctx.Value(key)
+	if v == nil {
+		return fallback
+	}
+	n, ok := v.(int)
+	if !ok {
+		log.WithFields(log.Fields{"key": key, "type": fmt.Sprintf("%T", v)}).
+			Warnf("Ignoring context retry value: expected int, using default %d", fallback)
+		return fallback
+	}
+	return n
 }
 
 func customRetry(retries int, backoff int) *retry.Standard {
@@ -322,11 +413,11 @@ func customRetry(retries int, backoff int) *retry.Standard {
 	})
 }
 
-// mustGetProvider retrieves a provider by name or exits with a useful error message if not found
+// mustGetProvider resolves a provider name through Provider or exits with its message.
 func mustGetProvider(name string) providers.CredsProvider {
-	p, err := providers.Get(name)
+	p, err := Provider(name)
 	if err != nil {
-		log.Fatalf("AWS provider %q not found. Please ensure it is defined in the providers section of your buildit configuration.", name)
+		log.Fatal(err)
 	}
 	return p
 }
@@ -337,7 +428,7 @@ func mustGetProvider(name string) providers.CredsProvider {
 // ACM returns the AWS ACM API client for the main provider.
 func ACM(ctx context.Context, providerName string) *acm.Client {
 	return _acm.Must(mustGetProvider(providerName), func(o *acm.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
@@ -348,7 +439,7 @@ func ACM(ctx context.Context, providerName string) *acm.Client {
 // the regional ACM accessor above.
 func ACMGlobal(ctx context.Context, providerName string) *acm.Client {
 	return acm.NewFromConfig(mustGetProvider(providerName).Config(), func(o *acm.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 		o.Region = "us-east-1"
 	})
 }
@@ -356,201 +447,201 @@ func ACMGlobal(ctx context.Context, providerName string) *acm.Client {
 // ApplicationAutoScaling returns an AWS ApplicationAutoScaling API client for the main provider.
 func ApplicationAutoScaling(ctx context.Context, providerName string) *applicationautoscaling.Client {
 	return _applicationautoscaling.Must(mustGetProvider(providerName), func(o *applicationautoscaling.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // Autoscaling returns an AWS Autoscaling API Client for the main provider.
 func Autoscaling(ctx context.Context, providerName string) *autoscaling.Client {
 	return _autoscaling.Must(mustGetProvider(providerName), func(o *autoscaling.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // Bedrock returns the AWS Bedrock API client for the main provider.
 func Bedrock(ctx context.Context, providerName string) *bedrock.Client {
 	return _bedrock.Must(mustGetProvider(providerName), func(o *bedrock.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // Cloudfront returns the AWS Cloudfront API client for the main provider.
 func Cloudfront(ctx context.Context, providerName string) *cloudfront.Client {
 	return _cloudfront.Must(mustGetProvider(providerName), func(o *cloudfront.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // CloudWatchLogs returns the AWS CloudWatchLogs API client for the main provider.
 func CloudWatchLogs(ctx context.Context, providerName string) *cloudwatchlogs.Client {
 	return _cloudwatchlogs.Must(mustGetProvider(providerName), func(o *cloudwatchlogs.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // CloudWatch returns the AWS CloudWatchLogs API client for the main provider.
 func CloudWatch(ctx context.Context, providerName string) *cloudwatch.Client {
 	return _cloudwatch.Must(mustGetProvider(providerName), func(o *cloudwatch.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // EventBridge returns the AWS EventBridge API client for the main provider.
 func EventBridge(ctx context.Context, providerName string) *eventbridge.Client {
 	return _eventbridge.Must(mustGetProvider(providerName), func(o *eventbridge.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // Firehose returns the AWS Kinesis Data Firehose API client for the main provider.
 func Firehose(ctx context.Context, providerName string) *firehose.Client {
 	return _firehose.Must(mustGetProvider(providerName), func(o *firehose.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // Glue returns the AWS Glue API client for the main provider.
 func Glue(ctx context.Context, providerName string) *glue.Client {
 	return _glue.Must(mustGetProvider(providerName), func(o *glue.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // EC2 returns an AWS EC2 API client for the main provider.
 func EC2(ctx context.Context, providerName string) *ec2.Client {
 	return _ec2.Must(mustGetProvider(providerName), func(o *ec2.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // ECS returns an AWS ECS API client for the main provider.
 func ECS(ctx context.Context, providerName string) *ecs.Client {
 	return _ecs.Must(mustGetProvider(providerName), func(o *ecs.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // ELB returns an AWS ELBv2 API client for the main provider.
 func ELB(ctx context.Context, providerName string) *elbv2.Client {
 	return _elasticloadbalancingv2.Must(mustGetProvider(providerName), func(o *elbv2.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // IAM returns an AWS IAM API client for the main provider.
 func IAM(ctx context.Context, providerName string) *iam.Client {
 	return _iam.Must(mustGetProvider(providerName), func(o *iam.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 func Lambda(ctx context.Context, providerName string) *lambda.Client {
 	return _lambda.Must(mustGetProvider(providerName), func(o *lambda.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // RDS returns an AWS RDS API client for the main provider.
 func RDS(ctx context.Context, providerName string) *rds.Client {
 	return _rds.Must(mustGetProvider(providerName), func(o *rds.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // Route53 returns an AWS Route53 API client
 func Route53(ctx context.Context, providerName string) *route53.Client {
 	return _route53.Must(mustGetProvider(providerName), func(o *route53.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // S3 returns an AWS S3 API client
 func S3(ctx context.Context, providerName string) *s3.Client {
 	return _s3.Must(mustGetProvider(providerName), func(o *s3.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // ServiceDiscovery returns an AWS ServiceDiscovery API client for the main provider.
 func ServiceDiscovery(ctx context.Context, providerName string) *servicediscovery.Client {
 	return _servicediscovery.Must(mustGetProvider(providerName), func(o *servicediscovery.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // STS returns an AWS STS API client for the main provider.
 func STS(ctx context.Context, providerName string) *sts.Client {
 	return _sts.Must(mustGetProvider(providerName), func(o *sts.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // SecretsManager returns an AWS SecretsManager API client for the main provider.
 func SecretsManager(ctx context.Context, providerName string) *secretsmanager.Client {
 	return _secretsmanager.Must(mustGetProvider(providerName), func(o *secretsmanager.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // SFN returns an AWS SFN (state function) API client for the main provider.
 func SFN(ctx context.Context, providerName string) *sfn.Client {
 	return _sfn.Must(mustGetProvider(providerName), func(o *sfn.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // SQS returns the AWS SQS API client for the main provider.
 func SQS(ctx context.Context, providerName string) *sqs.Client {
 	return _sqs.Must(mustGetProvider(providerName), func(o *sqs.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // SNS returns the AWS SNS API client for the main provider.
 func SNS(ctx context.Context, providerName string) *sns.Client {
 	return _sns.Must(mustGetProvider(providerName), func(o *sns.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // SNS returns the AWS SNS API client for the main provider.
 func EFS(ctx context.Context, providerName string) *efs.Client {
 	return _efs.Must(mustGetProvider(providerName), func(o *efs.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // KMS returns the AWS KMS API client for the supplied provider.
 func KMS(ctx context.Context, providerName string) *kms.Client {
 	return _kms.Must(mustGetProvider(providerName), func(o *kms.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // MSK returns the AWS MSK API client for the main provider.
 func MSK(ctx context.Context, providerName string) *kafkaconnect.Client {
 	return _kafkaconnect.Must(mustGetProvider(providerName), func(o *kafkaconnect.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // Kafka returns the AWS MSK API client for the main provider.
 func Kafka(ctx context.Context, providerName string) *kafka.Client {
 	return _kafka.Must(mustGetProvider(providerName), func(o *kafka.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 func ResourceGroupsTaggingAPI(ctx context.Context, providerName string) *resourcegroupstaggingapi.Client {
 	return _resourcegroupstaggingapi.Must(mustGetProvider(providerName), func(o *resourcegroupstaggingapi.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // DynamoDB returns the AWS DynamoDB API client for the main provider.
 func DynamoDB(ctx context.Context, providerName string) *dynamodb.Client {
 	return _dynamodb.Must(mustGetProvider(providerName), func(o *dynamodb.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 	})
 }
 
@@ -561,7 +652,7 @@ func DynamoDB(ctx context.Context, providerName string) *dynamodb.Client {
 // is cached per provider, so the region pin here would leak into it).
 func WAFV2Global(ctx context.Context, providerName string) *wafv2.Client {
 	return _wafv2.Must(mustGetProvider(providerName), func(o *wafv2.Options) {
-		o.Retryer = customRetry(ctx.Value(util.RETRY).(int), ctx.Value(util.BACKOFF).(int))
+		o.Retryer = retryerFor(ctx)
 		o.Region = "us-east-1"
 	})
 }

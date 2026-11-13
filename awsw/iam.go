@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/TouchBistro/awesome/providers"
 	"github.com/TouchBistro/buildit/client"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
@@ -32,7 +31,7 @@ func (i IAM) RoleArnForIdentifier(ctx context.Context, identifier string) (*stri
 
 	iamService := i
 	if provider != "" {
-		if _, err := providers.Get(provider); err != nil {
+		if _, err := client.Provider(provider); err != nil {
 			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
 		}
 		iamService = NewIAM(ctx, provider)
@@ -58,7 +57,7 @@ func (i IAM) PolicyArnForIdentifier(ctx context.Context, identifier string) (*st
 
 	iamService := i
 	if provider != "" {
-		if _, err := providers.Get(provider); err != nil {
+		if _, err := client.Provider(provider); err != nil {
 			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
 		}
 		iamService = NewIAM(ctx, provider)

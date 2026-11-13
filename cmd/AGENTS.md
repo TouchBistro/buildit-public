@@ -4,8 +4,12 @@ This package implements the CLI interface for `buildit` using the Cobra framewor
 
 ## Structure
 
-- `main.go`: The entry point of the application.
-- `cmd/root.go`: Defines the root `buildit` command and global flags.
+- `cmd/buildit/main.go`: The entry point of the CLI binary (`go build ./cmd/buildit`). The
+  module root is the `buildit` library package, so `main` cannot live there.
+- `cmd/root.go`: Defines the root `buildit` command and global flags. Its persistent pre-run
+  builds the `default` provider from the `--default-provider-type` family of flags
+  (`client.InitDefaultProvider`) before `config.Parse`, replacing any registered `default`; the
+  shared pipeline only builds one when none is registered.
 - `cmd/[command].go`: Each major CLI command (apply, destroy, etc.) has its own file.
 
 ## Command Implementation Pattern

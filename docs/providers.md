@@ -4,7 +4,7 @@
 
 > Note: `buildit` supports provisioning resources in AWS only, so the providers configuration is specific to AWS.
 
-There are two reserved provider names, `default` & `main`. If not explicitly configured, the `main` provider is just a clone of the `default`.
+There are two reserved provider names, `default` & `main`. If not explicitly configured, `main` resolves to the `default` provider.
 
 ### Provider Scoping
 
@@ -237,7 +237,7 @@ or a combination of the role name & AWS account ID using `--role-name` & `--acco
 
 # `main` Provider
 
-`buildit` creates a clone of the `default` provider and saves it as `main`. All AWS API actions performed by `buildit` use the `main` provider.  If for some reason we need a different role for these operations you can either configure the `default` provider with those credentials, or explicitly configure the `main` provider by specifying a `role` to assume. 
+All AWS API actions performed by `buildit` use the `main` provider. `buildit` never creates one: when a client is built, `main` resolves to the provider configured under that name if there is one, else to `default`. If for some reason we need a different role for these operations you can either configure the `default` provider with those credentials, or explicitly configure the `main` provider by specifying a `role` to assume. 
 
 > Note: All non-default providers, including `main` when explicitly defined, are done so in the buildit config YAML files.
 

@@ -17,9 +17,10 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// internal provider is a data structure to hold
-// internal representation of buildit config.
-type InternalConfig struct {
+// Config is the merged, normalized and validated form of a buildit config: the resource
+// graph, the global tags and the providers. Parse builds one from files; NewConfig builds
+// one from values constructed in Go, and the two may be combined (CollectFiles).
+type Config struct {
 	_config   []builditConfig
 	_override *builditConfig
 
@@ -34,34 +35,37 @@ type InternalConfig struct {
 //	  i- supplying finalized global tags to all internal resources
 //	 ii- normalizing all resources
 //	iii- performing validations
-func (i InternalConfig) Graph() *Graph {
+func (i Config) Graph() *Graph {
 	return i.graph
 }
 
-func (i InternalConfig) Tags() map[string]string {
+func (i Config) Tags() map[string]string {
 	return i.globalTags
 }
 
-// Pr returns the internal providers map
-func (i InternalConfig) Providers() map[string]*client.AwsProvider {
+// Providers returns the providers declared in the `providers:` sections of the config
+// files. Providers a Go consumer registered with the awesome providers package are not
+// included: they are already built, and are found by name through the registry.
+func (i Config) Providers() map[string]*client.AwsProvider {
 	return i.providers
 }
 
-// NewInternalConfig builds an InternalConfig from values constructed in Go, the way Parse
-// builds one from files, so a library consumer can reach Generate's output with no file I/O.
+// NewConfig builds a Config from values constructed in Go, the way Parse builds one from
+// files, so a library consumer can reach Generate's output with no file I/O.
 //
-// rs, providers and globalTags are what the `resources:`, `providers:` and `globalTags:`
-// sections of a single buildit.yml would have parsed to. Call Generate on the result; it
-// still initializes the providers (which reaches AWS) and normalizes and validates every
-// resource exactly as it does for a parsed config.
+// rs and globalTags are what the `resources:` and `globalTags:` sections of a single
+// buildit.yml would have parsed to. Providers come from the awesome providers registry,
+// where the consumer registers them before calling Generate, or are declared in config
+// files merged in with CollectFiles. Call Generate on the result; it still initializes the
+// `default` provider when none is registered (which may reach AWS) and normalizes and
+// validates every resource exactly as it does for a parsed config.
 //
 // There is no file content to hash, so the audit tag is derived from an empty SHA list.
 // A consumer that wants a meaningful audit value sets `audit` in globalTags, or passes
 // RootOptions.NoAuditTags.
-func NewInternalConfig(rs ResourceSet, providers map[string]*client.AwsProvider, globalTags map[string]string) *InternalConfig {
-	ic := &InternalConfig{}
+func NewConfig(rs ResourceSet, globalTags map[string]string) *Config {
+	ic := &Config{}
 	ic.Collect(builditConfig{
-		Providers:  providers,
 		Resources:  rs,
 		GlobalTags: globalTags,
 	})
@@ -69,34 +73,43 @@ func NewInternalConfig(rs ResourceSet, providers map[string]*client.AwsProvider,
 }
 
 // Collects the builditConfigs to be included in the internalConfig
-func (i *InternalConfig) Collect(cfg builditConfig) {
+func (i *Config) Collect(cfg builditConfig) {
 	i._config = append(i._config, cfg)
 }
 
 // SetOverride add an override config
-func (i *InternalConfig) SetOverride(cfg builditConfig) {
+func (i *Config) SetOverride(cfg builditConfig) {
 	i._override = &cfg
 }
 
 // Generate uses the collected buildit configs to generate the final internalConfig
-func (i *InternalConfig) Generate(ctx context.Context, opts RootOptions) error {
+func (i *Config) Generate(ctx context.Context, opts RootOptions) error {
 	if err := i.mergeConfigs(opts); err != nil {
 		return err
 	}
 
-	// initalizing providers
-	err := client.InitAwsProviders(ctx, opts.DefaultProvider, i.providers)
-	if err != nil {
+	if err := i.initProviders(ctx); err != nil {
 		return errors.Wrapf(err, "error initializing providers")
 	}
 
 	return i.buildGraph(ctx)
 }
 
+// initProviders is Generate's second pass, the only one that may reach AWS: `default` is
+// built unless one is registered, then the providers declared in the config files are
+// initialized. Nothing else is written to the awesome registry: `main` resolves through
+// client.Provider, and providers a Go consumer registered are found there by name.
+func (i *Config) initProviders(ctx context.Context) error {
+	if err := client.EnsureDefaultProvider(ctx); err != nil {
+		return err
+	}
+	return client.InitNamedProviders(ctx, i.providers)
+}
+
 // mergeConfigs is Generate's first two passes: global tags (plus the audit tag) and
 // providers are merged across every collected config and the override is applied to the
 // providers. It costs no AWS calls, so a config mistake found here fails before any.
-func (i *InternalConfig) mergeConfigs(opts RootOptions) error {
+func (i *Config) mergeConfigs(opts RootOptions) error {
 	// buildit owns the buildit: tag namespace. globalTags are checked up front because a
 	// reserved key here lands on every resource; per-resource tags are checked in pass 3,
 	// alongside the rest of each resource's validation.
@@ -131,7 +144,7 @@ func (i *InternalConfig) mergeConfigs(opts RootOptions) error {
 	}
 
 	// pass 2
-	// merge, apply overrides & initialize providers
+	// merge & apply overrides to providers
 	for _, c := range i._config {
 		if err := i.mergeProviders(c.Providers); err != nil {
 			return err
@@ -148,7 +161,7 @@ func (i *InternalConfig) mergeConfigs(opts RootOptions) error {
 // It is separate from Generate so the wiring can be tested without the provider
 // initialization that sits between them, which calls STS. It expects mergeConfigs to have
 // run: a resource naming a provider that was never merged is rejected here.
-func (i *InternalConfig) buildGraph(ctx context.Context) error {
+func (i *Config) buildGraph(ctx context.Context) error {
 	// pass 3
 	// merge buildit configs
 	graph := &Graph{}
@@ -880,7 +893,7 @@ func (i *InternalConfig) buildGraph(ctx context.Context) error {
 // internal helpers
 
 // MergeProviders merges the supplied providers map to the internal providers
-func (i *InternalConfig) mergeProviders(providers map[string]*client.AwsProvider) error {
+func (i *Config) mergeProviders(cfgs map[string]*client.AwsProvider) error {
 
 	// initialize internal providers map
 	if i.providers == nil {
@@ -888,17 +901,17 @@ func (i *InternalConfig) mergeProviders(providers map[string]*client.AwsProvider
 	}
 
 	if len(i.providers) == 0 {
-		maps.Copy(i.providers, providers)
+		maps.Copy(i.providers, cfgs)
 		return nil
 	}
 
-	for k := range providers {
+	for k := range cfgs {
 		// check redef
 		if _, ok := i.providers[k]; ok {
 			return errors.Errorf("provider %q redefined in context", k)
 		}
 	}
-	maps.Copy(i.providers, providers)
+	maps.Copy(i.providers, cfgs)
 	return nil
 }
 
@@ -908,7 +921,7 @@ func (i *InternalConfig) mergeProviders(providers map[string]*client.AwsProvider
 // The copy is not optional. i.globalTags is handed to every resource, and `buildit audit`
 // turns each of its keys into a tag filter, so writing a per-resource value into it would
 // corrupt both.
-func (i InternalConfig) tagsFor(id string) map[string]string {
+func (i Config) tagsFor(id string) map[string]string {
 	tags := maps.Clone(i.globalTags)
 	if tags == nil {
 		// globalTags is only allocated when audit tags are on, so it is nil for a config
@@ -922,7 +935,7 @@ func (i InternalConfig) tagsFor(id string) map[string]string {
 }
 
 // MergeTags merges the supplied tags to the internal tags
-func (i *InternalConfig) mergeTags(tags map[string]string) {
+func (i *Config) mergeTags(tags map[string]string) {
 	if len(tags) == 0 {
 		return
 	}
@@ -936,12 +949,12 @@ func (i *InternalConfig) mergeTags(tags map[string]string) {
 }
 
 // getEffectiveProviderName uses various field to return the effective provider & resource identifer
-func (i InternalConfig) getEffectiveProviderAndId(defined_name string, res_ctx resource.Context) (*string, *string, error) {
+func (i Config) getEffectiveProviderAndId(defined_name string, res_ctx resource.Context) (*string, *string, error) {
 	return i.getEffectiveProviderAndIdWithDelim(defined_name, res_ctx, resource.DefaultKeyParseDelim)
 }
 
 // getEffectiveProviderName uses various field to return the effective provider & resource identifer
-func (i InternalConfig) getEffectiveProviderAndIdWithDelim(defined_name string, res_ctx resource.Context, delim string) (*string, *string, error) {
+func (i Config) getEffectiveProviderAndIdWithDelim(defined_name string, res_ctx resource.Context, delim string) (*string, *string, error) {
 	// check resource name
 	var providerFromNameDefined *string
 	var providerFromContextDefined *string
@@ -968,13 +981,28 @@ func (i InternalConfig) getEffectiveProviderAndIdWithDelim(defined_name string, 
 
 	prov := util.Coalesce(providerFromNameDefined, util.Coalesce(providerFromContextDefined, client.MainProvider))
 
-	if _, ok := i.providers[prov]; !ok && prov != client.DefaultProvider && prov != client.MainProvider {
+	if !i.knownProvider(prov) {
 		return nil, nil, errors.Errorf("unknown provider name %q for resource %q", prov, defined_name)
 	}
 
 	_, name := resource.NewKeyWithDelim(delim, defined_name).Split()
 
 	return &prov, &name, nil
+}
+
+// knownProvider reports whether a resource may name prov: one of the reserved names, a
+// provider declared in a config file, or one registered with the awesome providers
+// package. Checked while the graph is built, so an unregistered prefix fails before any
+// AWS call is made on its behalf.
+func (i Config) knownProvider(prov string) bool {
+	if prov == client.DefaultProvider || prov == client.MainProvider {
+		return true
+	}
+	if _, ok := i.providers[prov]; ok {
+		return true
+	}
+	_, err := client.Provider(prov)
+	return err == nil
 }
 
 // helpers to deal with override config
@@ -1009,7 +1037,7 @@ func (i InternalConfig) getEffectiveProviderAndIdWithDelim(defined_name string, 
 // the override logic & returns the merged version
 
 // overrideProviders applies override config to providers section
-func (i *InternalConfig) overrideProviders() error {
+func (i *Config) overrideProviders() error {
 	overridePrefix := color.Yellow("** Override **")
 
 	if i._override != nil {
@@ -1057,7 +1085,7 @@ func (i *InternalConfig) overrideProviders() error {
 // the graph. Validation failures are reported through addErr, the same
 // accumulator Generate uses for every other resource, so an override-injected
 // resource that fails Validate fails the run like any other (DEVOPS-8901).
-func (i *InternalConfig) overrideSecurityGroups(ctx context.Context, addErr func(error)) error {
+func (i *Config) overrideSecurityGroups(ctx context.Context, addErr func(error)) error {
 	ovverridPrefix := color.Yellow("** Override **")
 
 	if i._override != nil {

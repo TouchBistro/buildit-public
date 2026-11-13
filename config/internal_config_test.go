@@ -9,7 +9,7 @@ import (
 )
 
 func TestTagsForAddsResourceID(t *testing.T) {
-	i := InternalConfig{globalTags: map[string]string{"team": "example-team"}}
+	i := Config{globalTags: map[string]string{"team": "example-team"}}
 
 	assert.Equal(t, map[string]string{
 		"team":                       "example-team",
@@ -20,7 +20,7 @@ func TestTagsForAddsResourceID(t *testing.T) {
 // Every resource gets its own map. Sharing one would mean the last resource processed
 // decided everybody's id.
 func TestTagsForReturnsIndependentMaps(t *testing.T) {
-	i := InternalConfig{globalTags: map[string]string{"team": "example-team"}}
+	i := Config{globalTags: map[string]string{"team": "example-team"}}
 
 	first := i.tagsFor("example-bucket")
 	second := i.tagsFor("other-example-bucket")
@@ -36,7 +36,7 @@ func TestTagsForReturnsIndependentMaps(t *testing.T) {
 // per-resource value leaking into that map would filter on one resource's id and match
 // nothing, in every account.
 func TestTagsForLeavesGlobalTagsUntouched(t *testing.T) {
-	i := InternalConfig{globalTags: map[string]string{"team": "example-team"}}
+	i := Config{globalTags: map[string]string{"team": "example-team"}}
 
 	i.tagsFor("example-bucket")
 
@@ -47,7 +47,7 @@ func TestTagsForLeavesGlobalTagsUntouched(t *testing.T) {
 // globalTags is only allocated when audit tags are on, so --no-audit against a config with
 // no globalTags leaves it nil and a bare map write would panic.
 func TestTagsForNilGlobalTags(t *testing.T) {
-	i := InternalConfig{}
+	i := Config{}
 
 	require.NotPanics(t, func() {
 		assert.Equal(t, map[string]string{
@@ -59,7 +59,7 @@ func TestTagsForNilGlobalTags(t *testing.T) {
 // A wildcard certificate's identifier is its domain name, and '*' is not a legal character
 // in an AWS tag value — unsanitized it would fail RequestCertificate outright.
 func TestTagsForSanitizesValue(t *testing.T) {
-	i := InternalConfig{}
+	i := Config{}
 
 	assert.Equal(t, "_.example.com", i.tagsFor("*.example.com")[util.BuilditResourceIDTagKey])
 }

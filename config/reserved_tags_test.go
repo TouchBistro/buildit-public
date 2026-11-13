@@ -118,7 +118,7 @@ func TestCheckReservedGlobalTags(t *testing.T) {
 globalTags:
   buildit:owner: example-team
 `)
-		i := InternalConfig{_config: []builditConfig{cfg}}
+		i := Config{_config: []builditConfig{cfg}}
 
 		err := i.checkReservedGlobalTags()
 		require.Error(t, err)
@@ -132,7 +132,7 @@ globalTags:
   audit: example-hash
   x-buildit:owner: example-team
 `)
-		i := InternalConfig{_config: []builditConfig{cfg}}
+		i := Config{_config: []builditConfig{cfg}}
 
 		assert.NoError(t, i.checkReservedGlobalTags())
 	})
@@ -142,7 +142,7 @@ globalTags:
 globalTags:
   buildit:owner: example-team
 `)
-		i := InternalConfig{_override: &override}
+		i := Config{_override: &override}
 
 		assert.Error(t, i.checkReservedGlobalTags())
 	})
@@ -150,7 +150,7 @@ globalTags:
 	t.Run("counts offenders across every collected config", func(t *testing.T) {
 		one := parseConfig(t, "globalTags:\n  buildit:owner: a\n")
 		two := parseConfig(t, "globalTags:\n  buildit:cost: b\n  buildit:team: c\n")
-		i := InternalConfig{_config: []builditConfig{one, two}}
+		i := Config{_config: []builditConfig{one, two}}
 
 		err := i.checkReservedGlobalTags()
 		require.Error(t, err)

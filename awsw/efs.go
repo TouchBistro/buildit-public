@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/TouchBistro/awesome/providers"
 	"github.com/TouchBistro/buildit/client"
 	"github.com/TouchBistro/buildit/util"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -54,7 +53,7 @@ func (e EFS) forProvider(ctx context.Context, provider string) (EFS, error) {
 	if provider == "" {
 		return e, nil
 	}
-	if _, err := providers.Get(provider); err != nil {
+	if _, err := client.Provider(provider); err != nil {
 		return EFS{}, errors.Wrapf(err, "provider %q not found", provider)
 	}
 	return NewEFS(ctx, provider), nil

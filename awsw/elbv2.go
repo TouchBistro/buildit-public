@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/TouchBistro/awesome/providers"
 	"github.com/TouchBistro/buildit/client"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	elbv2 "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
@@ -34,7 +33,7 @@ func (e ELB) LoadBalancerArnForIdentifier(ctx context.Context, identifier string
 
 	elbv2Service := e
 	if provider != "" {
-		if _, err := providers.Get(provider); err != nil {
+		if _, err := client.Provider(provider); err != nil {
 			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
 		}
 		elbv2Service = NewELB(ctx, provider)
@@ -64,7 +63,7 @@ func (e ELB) TargetGroupArnForIdentifier(ctx context.Context, identifier string)
 
 	elbv2Service := e
 	if provider != "" {
-		if _, err := providers.Get(provider); err != nil {
+		if _, err := client.Provider(provider); err != nil {
 			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
 		}
 		elbv2Service = NewELB(ctx, provider)

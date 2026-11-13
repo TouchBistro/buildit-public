@@ -4,6 +4,9 @@ This document defines the core coding standards and practices for the buildit pr
 
 ## Package Guides
 
+- **root `buildit`**: the library API (`buildit.NewConfig`, `ResourceSet`, `With*` options) for
+  programs that embed buildit; it composes `config` and finds providers in the awesome providers
+  registry, where the program registers them. The CLI binary is built from `cmd/buildit`.
 - [**`cmd/`**](./cmd/AGENTS.md): CLI implementation (Cobra), commands, and flags.
 - [**`config/`**](./config/AGENTS.md): Configuration loading, variable merging, and validation.
 - [**`resource/`**](./resource/AGENTS.md): Resource lifecycle (Apply, Destroy, Compare), interfaces, and ARN resolution patterns.

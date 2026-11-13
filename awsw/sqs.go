@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/TouchBistro/awesome/providers"
 	"github.com/TouchBistro/buildit/client"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -35,7 +34,7 @@ func (s SQS) QueueArnForIdentifier(ctx context.Context, identifier string) (*str
 	sqsService := s
 	if provider != "" {
 		// Verify provider exists to avoid fatal error in client.SQS
-		if _, err := providers.Get(provider); err != nil {
+		if _, err := client.Provider(provider); err != nil {
 			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
 		}
 		sqsService = NewSQS(ctx, provider)

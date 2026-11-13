@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/TouchBistro/awesome/providers"
 	"github.com/TouchBistro/buildit/client"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -33,7 +32,7 @@ func (e EC2) VpcArnForIdentifier(ctx context.Context, identifier string) (*strin
 
 	ec2Service := e
 	if provider != "" {
-		if _, err := providers.Get(provider); err != nil {
+		if _, err := client.Provider(provider); err != nil {
 			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
 		}
 		ec2Service = NewEC2(ctx, provider)
@@ -87,7 +86,7 @@ func (e EC2) SubnetArnForIdentifier(ctx context.Context, identifier string) (*st
 
 	ec2Service := e
 	if provider != "" {
-		if _, err := providers.Get(provider); err != nil {
+		if _, err := client.Provider(provider); err != nil {
 			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
 		}
 		ec2Service = NewEC2(ctx, provider)
@@ -141,7 +140,7 @@ func (e EC2) SecurityGroupArnForIdentifier(ctx context.Context, identifier strin
 
 	ec2Service := e
 	if provider != "" {
-		if _, err := providers.Get(provider); err != nil {
+		if _, err := client.Provider(provider); err != nil {
 			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
 		}
 		ec2Service = NewEC2(ctx, provider)

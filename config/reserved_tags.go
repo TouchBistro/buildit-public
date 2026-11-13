@@ -74,7 +74,7 @@ func checkBuilditTagsApplied(resourceType, name string, tags map[string]string) 
 // Checked once per file, and early: a reserved key here is copied onto every resource, so
 // leaving it to the per-resource checks would report the same mistake once per resource.
 // Failing here also means a bad config costs no AWS calls.
-func (i *InternalConfig) checkReservedGlobalTags() error {
+func (i *Config) checkReservedGlobalTags() error {
 	configs := i._config
 	if i._override != nil {
 		configs = append(slices.Clone(configs), *i._override)

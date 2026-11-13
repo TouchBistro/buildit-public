@@ -31,6 +31,15 @@ func NewServiceName(ctx context.Context, providerName string) ServiceName {
   ```go
   acmClient := client.ACM(ctx, c.Context.ProviderName)
   ```
+- Provider names are resolved by `client.Provider(name)`, the only place `main` is mapped to
+  the registered `main` or else `default`. A method that takes an identifier with a
+  `<provider>::` prefix checks the provider with it before building a client for it, so a bad
+  prefix is an error and not a fatal exit:
+  ```go
+  if _, err := client.Provider(provider); err != nil {
+      return nil, errors.Wrapf(err, "provider %q not found", provider)
+  }
+  ```
 
 ### ARN Resolution (`[Resource]ArnForIdentifier`)
 

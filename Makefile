@@ -12,7 +12,7 @@ endif
 
 # Build buildit
 build:
-	go build
+	go build ./cmd/buildit
 .PHONY: build
 
 # Clean all build artifacts

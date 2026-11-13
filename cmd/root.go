@@ -211,7 +211,17 @@ func getRootPersistentPreRunE(opts *config.RootOptions, c *config.Container) fun
 		}
 
 		c.RootOpts = opts
-		var internal_config *config.InternalConfig
+
+		// The CLI's `default` provider comes from its flags and replaces any registered one.
+		// config.Generate only builds `default` when none is registered, so it must exist first.
+		if err = client.InitDefaultProvider(ctx, opts.DefaultProvider); err != nil {
+			return &fatal.Error{
+				Msg: "failed to initialize the default provider",
+				Err: err,
+			}
+		}
+
+		var internal_config *config.Config
 		if internal_config, err = config.Parse(ctx, *opts, tokens); err != nil {
 			return &fatal.Error{
 				Msg: "failed to parse buildit config",

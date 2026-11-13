@@ -14,6 +14,10 @@ before:
 
 builds:
   -
+    # The root package is the library (buildit.NewConfig, DEVOPS-9105); the CLI
+    # lives under cmd/buildit. Without this goreleaser builds `.`, which Go
+    # emits as a package archive, not an executable, with no error.
+    main: ./cmd/buildit
     env:
       - CGO_ENABLED=0
     # {{.Version}} (the tag) — consumers should see the semver in

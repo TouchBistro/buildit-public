@@ -21,6 +21,9 @@ func TestResourceProviderFieldIsParsed(t *testing.T) {
 
 	for i := range rcType.NumField() {
 		field := rcType.Field(i)
+		if !field.IsExported() || field.Type.Kind() != reflect.Map {
+			continue // not a resource type section
+		}
 		tag := field.Tag.Get("yaml")
 		require.NotEmpty(t, tag, "ResourceSet field %q has no yaml tag", field.Name)
 
@@ -47,7 +50,7 @@ func TestResourceProviderFieldIsParsed(t *testing.T) {
 // dropped: unknown providers are rejected, and a provider supplied both via the
 // resource-name prefix and the field must be consistent.
 func TestGetEffectiveProviderAndId_FieldValidation(t *testing.T) {
-	i := InternalConfig{providers: map[string]*client.AwsProvider{"known": {}}}
+	i := Config{providers: map[string]*client.AwsProvider{"known": {}}}
 
 	t.Run("field provider used", func(t *testing.T) {
 		pr, id, err := i.getEffectiveProviderAndId("my-res", resource.Context{ProviderName: "known"})

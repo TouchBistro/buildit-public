@@ -25,15 +25,32 @@ This package manages the loading, parsing, and validation of `buildit` configura
   with the other validation errors so every collision is reported in one run. Use
   `resourceTypeName` (yaml tag of `ResourceSet`) when a message needs to name a resource type
   the way the user wrote it.
-- **Two entry points, one pipeline**: `Parse` reads files; `NewInternalConfig(rs ResourceSet,
-  providers, globalTags)` takes the same values built in Go (DEVOPS-8933, libbuildit consumers
-  such as wafer). Both produce an `InternalConfig` that `Generate` finishes in three steps:
-  `mergeConfigs` (tags, audit tag, providers; no AWS), `client.InitAwsProviders` (STS), then
-  `buildGraph` (provider/name resolution, tagsFor, Normalize, Validate, overrides, edges). Keep
-  that split: new config-shape checks go in `mergeConfigs` so they fail before any AWS call, and
-  `config/resource_set_test.go` runs `mergeConfigs` + `buildGraph` to assert the wired graph
-  without credentials. `ResourceSet` is exported and its yaml tags are the `resources:` section
-  names, so renaming a field or tag changes both the YAML format and the Go API.
+- **Two entry points, one pipeline**: `Parse` reads files; `NewConfig(rs ResourceSet, globalTags)`
+  takes the same values built in Go (DEVOPS-8933, DEVOPS-9105; libbuildit consumers such as
+  wafer, via the root `buildit` package). `CollectFiles` is `Parse` without `Generate`, so the two
+  sources merge. Both produce a `Config` that `Generate` finishes in three steps: `mergeConfigs`
+  (tags, audit tag, file-declared providers; no AWS), `initProviders` (`default` unless one is
+  registered, then the file-declared providers; STS), then `buildGraph` (provider/name
+  resolution, tagsFor, Normalize, Validate, overrides, edges). Keep that split: new config-shape
+  checks go in `mergeConfigs` so they fail before any AWS call, and `config/resource_set_test.go`
+  runs `mergeConfigs` + `buildGraph` to assert the wired graph without credentials. `ResourceSet`
+  is exported and its yaml tags are the `resources:` section names, so renaming a field or tag
+  changes both the YAML format and the Go API. Every resource type must have an `AddX` /
+  `AddXWithProvider` pair in `resource_set.go` (`TestResourceSetAddMethodsCoverEveryType` fails
+  otherwise).
+- **Providers come from the awesome registry only.** The config holds nothing but the
+  `providers:` entries of the files it read; everything else is resolved by name through
+  `client.Provider`, which maps `main` to the registered `main` or else `default`, and buildit
+  never writes `default` (unless none is registered) or `main` to the registry. `knownProvider`
+  accepts the reserved names, a file-declared provider, or any registered name, so an
+  unregistered prefix fails in `buildGraph` with `unknown provider name` before any AWS call.
+  `AddXWithProvider` checks with `client.CheckProviderRegistered` that the provider it was handed
+  is the one registered under its name, not an older object a later build replaced. The CLI
+  builds `default` from its flags in `cmd/root.go` before `Parse`; a library consumer registers
+  its own, or gets one from the AWS default credentials chain. Tests that need a `default`
+  register an unvalidated `providers.NewDefaultCredsProvider` under
+  `providers.DefaultCredsProviderName`; the registry is process-wide and a name cannot be
+  unregistered, so order such tests within one function.
 - **Plan data vs rendering**: `plan.go` splits planning in two. `Graph.PlanResult` walks the graph,
   calls `Compare`, and returns `[]PlanEntry` with no logging; `planRenderer` turns entries into the
   logrus output users see. Both sit on `planEach`, which hands over each entry as soon as its

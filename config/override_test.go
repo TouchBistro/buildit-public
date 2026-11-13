@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func overrideWithSecurityGroup(name string, sg resource.SecurityGroup) InternalConfig {
-	return InternalConfig{
+func overrideWithSecurityGroup(name string, sg resource.SecurityGroup) Config {
+	return Config{
 		graph: &Graph{},
 		_override: &builditConfig{Resources: ResourceSet{
 			SecurityGroup: map[string]resource.SecurityGroup{name: sg},
@@ -89,7 +89,7 @@ func graphWithSecurityGroup(t *testing.T, name string) *Graph {
 	return g
 }
 
-func overrideOnGraph(g *Graph, pattern string, sg resource.SecurityGroup) InternalConfig {
+func overrideOnGraph(g *Graph, pattern string, sg resource.SecurityGroup) Config {
 	i := overrideWithSecurityGroup(pattern, sg)
 	i.graph = g
 	return i

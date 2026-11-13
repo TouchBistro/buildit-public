@@ -96,28 +96,75 @@ resources:
 ## Building a config from Go
 
 A program that embeds **buildit** as a library does not have to write a `buildit.yml` to disk.
-`config.ResourceSet` is the Go form of the `resources:` section, with one map per resource type
-keyed the same way as the YAML (`name` or `provider::name`), and `config.NewInternalConfig` takes
-it together with the `providers:` and `globalTags:` values:
+The root `buildit` package exposes the same pipeline the CLI runs: fill a `buildit.ResourceSet`
+with the `AddX` / `AddXWithProvider` methods (one pair per resource type, named after the
+`resources:` sections), and hand it to `buildit.NewConfig` with the tags.
+
+### Providers
+
+Providers are [awesome](https://github.com/TouchBistro/awesome) `providers.CredsProvider`
+values, built with that package's own constructors, and awesome's process-wide registry is the
+only place **buildit** looks for them. Building a provider with `providers.New*CredsProvider`
+registers it under its name; do that before calling `NewConfig`, which rejects a resource naming
+a provider that is not registered (`unknown provider name`) before any AWS call is made on its
+behalf. The two reserved names work as follows:
+
+- `default` is the credentials the program runs with. A registered `default` is used as is and
+  never replaced by **buildit**. If none is registered, `NewConfig` builds one the way the CLI
+  does without flags: the AWS default credentials chain, `us-east-1`, validated with STS. Awesome's
+  `init/cmd` package registers `default` from the process's flags and environment when
+  blank-imported, so a program that already uses it needs nothing more.
+- `main` provisions the resources that name no provider and resolves the references they make.
+  **buildit** never writes it: at the time a client is built, `main` is the registered `main` if
+  there is one (declared in a config file, or registered by the program), else `default`.
+
+Because the registry is shared by the whole process, configs that need different `default`s must
+not be built or applied at the same time: re-registering `default` moves every config's unprefixed
+resources to it.
 
 ```go
-rs := config.ResourceSet{
-    CWLogGroup: map[string]resource.CWLogGroup{
-        "example-logs": {Retention: aws.Int32(30)},
-    },
-}
-providers := map[string]*client.AwsProvider{
-    "example": {ProviderType: client.ProviderTypeRole, AccountId: "123456789012", RoleName: "example-role"},
-}
+// `default`: the program's own credentials, registered explicitly to pick the region
+// and validate up front. Omit this and NewConfig builds one from the default chain.
+base, err := providers.NewDefaultCredsProvider(ctx, providers.DefaultCredsProviderName,
+    providers.WithRegion("us-east-1"), providers.ValidateProvider())
+other, err := providers.NewAssumeRoleCredsProvider(ctx, "example-other",
+    providers.WithBaseCredsProvider(base),
+    providers.WithAccountId("123456789012"),
+    providers.WithRoleName("example-role"))
 
-ic := config.NewInternalConfig(rs, providers, map[string]string{"team": "example-team"})
-if err := ic.Generate(ctx, config.RootOptions{NoAuditTags: true}); err != nil {
-    return err
+var rs buildit.ResourceSet
+logs := resource.CWLogGroup{Retention: aws.Int32(30)}
+err = rs.AddCWLogGroup("example-logs", logs)                    // provisioned by `main`, here `default`
+err = rs.AddCWLogGroupWithProvider(other, "example-logs", logs) // provisioned by `example-other`
+err = rs.AddCWLogGroup("example-other::example-audit-logs", logs) // the same, by name
+
+cfg, err := buildit.NewConfig(ctx, rs, buildit.WithGlobalTag("team", "example-team"))
+if err != nil {
+    return err // every validation, graph and provider problem is reported here
 }
-graph := ic.Graph() // the same wired graph `buildit plan` would build from the YAML
+graph := cfg.Graph() // the same wired graph `buildit plan` would build from the YAML
+err = graph.Apply(buildit.ContextWithRetryPolicy(ctx, 3, 20))
 ```
 
-`Generate` behaves exactly as it does for parsed files: it initializes the providers, resolves each
-resource's provider and name, applies global and `buildit:` tags, normalizes, validates, and builds
-the dependency edges. There is no file content to checksum, so the `audit` tag is only meaningful if
-you set it in `globalTags` yourself; otherwise pass `NoAuditTags`.
+`NewConfig` behaves exactly as parsing files does: it resolves each resource's provider and
+name, applies global and `buildit:` tags, normalizes, validates, and builds the dependency edges.
+`AddXWithProvider` is a convenience for the `provider::name` key form: it takes the provider the
+registry holds under that name, and fails if an older provider object has since been replaced
+there by a newer build of the same name.
+
+Config files can be merged into the same `Config`, rendered with variables and templates the way
+the CLI flags of the same names do. A provider declared in a config file's `providers:` section
+replaces a registered one of the same name, with a warning.
+
+```go
+cfg, err := buildit.NewConfig(ctx, rs,
+    buildit.WithConfigPath(".buildit/"),         // --path
+    buildit.WithTemplates("templates/"),         // --templates
+    buildit.WithVariablesFrom("vars/prod.vars"), // --variables-from
+    buildit.WithVariable("retention", "30"),     // --variables
+)
+```
+
+The `audit` global tag is derived from the config files' contents. A `Config` built only in Go
+has nothing to hash, so pass `buildit.WithoutAuditTags()` or set `audit` yourself with
+`WithGlobalTag`.
