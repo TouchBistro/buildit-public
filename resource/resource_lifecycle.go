@@ -10,7 +10,7 @@ import "context"
 // hold resources by pointer until Normalize has run.
 type NormalizableResource interface {
 	Resource
-	Normalize(context.Context)
+	Normalize(context.Context) error
 }
 
 // ValidatableResource is a Resource that checks its own business rules after

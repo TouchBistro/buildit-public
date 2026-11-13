@@ -133,7 +133,10 @@ func (d *Policy) equals(other *Policy) ([]string, resource.EqualsResult) {
 
 // apply the policy for the
 func (d *Policy) apply(ctx context.Context, rctx resource.Context, functionName string, qualifer *string) error {
-	client := client.Lambda(ctx, rctx.ProviderName)
+	client, err := client.Lambda(ctx, rctx.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	for _, s := range d.Statements {
 
@@ -187,7 +190,10 @@ func (d *Policy) apply(ctx context.Context, rctx resource.Context, functionName 
 
 // destroy the policies for the supplied lambda function & qualifier
 func (d *Policy) destroy(ctx context.Context, rctx resource.Context, functionName string, qualifier *string) error {
-	client := client.Lambda(ctx, rctx.ProviderName)
+	client, err := client.Lambda(ctx, rctx.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	for _, s := range d.Statements {
 		_, err := client.RemovePermission(ctx, &lambda.RemovePermissionInput{

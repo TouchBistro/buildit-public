@@ -165,7 +165,7 @@ type ContainerVolumes struct {
 
 // TaskDef represents a service Task Definition
 type TaskDef struct {
-	BaseResource `yaml:",inline"`
+	BaseResource            `yaml:",inline"`
 	Name                    string              `yaml:"name"`
 	Role                    string              `yaml:"role"`
 	ExecutionRole           string              `yaml:"executionRole"`
@@ -195,7 +195,7 @@ func (t TaskDef) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields.
-func (t *TaskDef) Normalize(ctx context.Context) {
+func (t *TaskDef) Normalize(ctx context.Context) error {
 	// taskExecutionRole can be defaulted to "ecsTaskExecutionRole"
 	if t.ExecutionRole == "" {
 		t.ExecutionRole = taskExecutionRoleDefault
@@ -315,6 +315,7 @@ func (t *TaskDef) Normalize(ctx context.Context) {
 			cont.FirelensConfig.Type = aws.String(string(ecstypes.FirelensConfigurationTypeFluentbit)) // default to be used
 		}
 	}
+	return nil
 }
 
 // Validate checks that the Task Def has a valid configuration.
@@ -470,7 +471,11 @@ func (t TaskDef) resolveEFSVolumeIDs(ctx context.Context) error {
 			continue
 		}
 		if efsClient == nil {
-			c := awsw.NewEFS(ctx, t.Context.ProviderName)
+			c, err := awsw.NewEFS(ctx, t.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+
 			efsClient = &c
 		}
 
@@ -536,7 +541,10 @@ func (t TaskDef) Destroy(ctx context.Context) error {
 	// Task defs can't be deleted, however they can be deregistered which sets them to INACTIVE
 
 	// TODO(@maintainer): is there a way to check if a task def is in use before deregistering?
-	ecsClient := client.ECS(ctx, t.Context.ProviderName)
+	ecsClient, err := client.ECS(ctx, t.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	log.WithField("Name", t.Identifier()).Info("Checking if task def exists")
 
@@ -632,7 +640,11 @@ func (t TaskDef) Compare(ctx context.Context) (ResourceDiff, error) {
 			diffs.Messages = append(diffs.Messages, "task role will be updated %v -> %v", *existing.TaskDefinitionArn, t.Role)
 		}
 	} else {
-		taskRoleArn, err := awsw.NewIAM(ctx, t.Context.ProviderName).RoleArnForName(ctx, t.Role)
+		iamSvc, err := awsw.NewIAM(ctx, t.Context.ProviderName)
+		if err != nil {
+			return nil, err
+		}
+		taskRoleArn, err := iamSvc.RoleArnForName(ctx, t.Role)
 		if err != nil {
 			return nil, err
 		}
@@ -644,7 +656,11 @@ func (t TaskDef) Compare(ctx context.Context) (ResourceDiff, error) {
 	}
 
 	// task execution role
-	taskExecutionRole, err := awsw.NewIAM(ctx, t.Context.ProviderName).RoleArnForName(ctx, t.ExecutionRole)
+	iamSvc2, err := awsw.NewIAM(ctx, t.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	taskExecutionRole, err := iamSvc2.RoleArnForName(ctx, t.ExecutionRole)
 	if err != nil {
 		diffs.diff = true
 		diffs.Messages = append(diffs.Messages, "task execution role is not the same")
@@ -1248,7 +1264,11 @@ func (t TaskDef) Compare(ctx context.Context) (ResourceDiff, error) {
 	}
 
 	// tags
-	awsTags, err := awsw.NewECS(ctx, t.Context.ProviderName).GetResourceTags(ctx, *existing.TaskDefinitionArn)
+	ecsSvc, err := awsw.NewECS(ctx, t.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	awsTags, err := ecsSvc.GetResourceTags(ctx, *existing.TaskDefinitionArn)
 	if err != nil {
 		return nil, err
 	}
@@ -1270,7 +1290,10 @@ func (t TaskDef) Compare(ctx context.Context) (ResourceDiff, error) {
 // If an error occurs, a non-nil error is returned. If the
 // task def is not found both the task def and error will be nil.
 func (t TaskDef) fetchExisting(ctx context.Context) (*ecstypes.TaskDefinition, error) {
-	ecsClient := client.ECS(ctx, t.Context.ProviderName)
+	ecsClient, err := client.ECS(ctx, t.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
 
 	// DescribeTaskDefinition lets you search for a task def by family name directly
 	// Unfortunately if the family doesn't exist is does not return a meaningful error,
@@ -1315,7 +1338,10 @@ loop:
 // apply creates the given task definition. If a task definition with the given name already exists
 // and it is not equal to the current task def a new revision of the task def will be created.
 func (t TaskDef) apply(ctx context.Context) error {
-	ecsClient := client.ECS(ctx, t.Context.ProviderName)
+	ecsClient, err := client.ECS(ctx, t.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	// resolve any buildit resource name references in efs volumes to their physical IDs; a no-op
 	// when Compare already resolved them (physical IDs pass through without AWS calls)
@@ -1323,12 +1349,20 @@ func (t TaskDef) apply(ctx context.Context) error {
 		return err
 	}
 
-	taskRoleArn, err := awsw.NewIAM(ctx, t.Context.ProviderName).RoleArnForName(ctx, t.Role)
+	iamSvc, err := awsw.NewIAM(ctx, t.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+	taskRoleArn, err := iamSvc.RoleArnForName(ctx, t.Role)
 	if err != nil {
 		return errors.Wrap(err, "cannot lookup role arn for task IAM role specified")
 	}
 
-	taskExecutionRole, err := awsw.NewIAM(ctx, t.Context.ProviderName).RoleArnForName(ctx, t.ExecutionRole)
+	iamSvc2, err := awsw.NewIAM(ctx, t.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+	taskExecutionRole, err := iamSvc2.RoleArnForName(ctx, t.ExecutionRole)
 	if err != nil {
 		return errors.Wrap(err, "cannot lookup role arn for task IAM execution role specified")
 	}
@@ -1642,13 +1676,21 @@ func (t TaskDef) applyDiffs(ctx context.Context, diffs ResourceDiff) error {
 
 		upserts := tdDiffs.tagDiff.Upserts()
 		if len(upserts) > 0 {
-			err := awsw.NewECS(ctx, t.Context.ProviderName).AddResourceTags(ctx, *arn, upserts)
+			ecsSvc, err := awsw.NewECS(ctx, t.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			err = ecsSvc.AddResourceTags(ctx, *arn, upserts)
 			if err != nil {
 				return err
 			}
 		}
 		if len(tdDiffs.tagDiff.Deleted) > 0 {
-			err := awsw.NewECS(ctx, t.Context.ProviderName).DeleteResourceTags(ctx, *arn, tdDiffs.tagDiff.Deleted)
+			ecsSvc2, err := awsw.NewECS(ctx, t.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			err = ecsSvc2.DeleteResourceTags(ctx, *arn, tdDiffs.tagDiff.Deleted)
 			if err != nil {
 				return err
 			}

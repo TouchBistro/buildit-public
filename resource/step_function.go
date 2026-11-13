@@ -41,17 +41,17 @@ func (r StateMachineAlias) equals(other StateMachineAlias) bool {
 // StateMachine represents a state machine resource
 type StateMachine struct {
 	BaseResource `yaml:",inline"`
-	Description *string             `yaml:"description"`
-	Definition  string              `yaml:"definition"`
-	Role        *string             `yaml:"role"`
-	Publish     *bool               `yaml:"publish"`
-	DependsOn   []Key               `yaml:"dependsOn"`
-	Aliases     []StateMachineAlias `yaml:"aliases"`
-	Tags        map[string]string   `yaml:"tags"`
-	Name        string              `yaml:"-"`
-	GlobalTags  map[string]string   `yaml:"-"`
-	Arn         *string             `yaml:"-"` // read from AWS
-	Versions    []string            `yaml:"-"` // read from AWS
+	Description  *string             `yaml:"description"`
+	Definition   string              `yaml:"definition"`
+	Role         *string             `yaml:"role"`
+	Publish      *bool               `yaml:"publish"`
+	DependsOn    []Key               `yaml:"dependsOn"`
+	Aliases      []StateMachineAlias `yaml:"aliases"`
+	Tags         map[string]string   `yaml:"tags"`
+	Name         string              `yaml:"-"`
+	GlobalTags   map[string]string   `yaml:"-"`
+	Arn          *string             `yaml:"-"` // read from AWS
+	Versions     []string            `yaml:"-"` // read from AWS
 }
 
 // Key returns the unique key for the resource for this buildit context
@@ -65,7 +65,7 @@ func (r StateMachine) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields
-func (r *StateMachine) Normalize(ctx context.Context) {
+func (r *StateMachine) Normalize(ctx context.Context) error {
 
 	// Merge globalTags to state machine tags, if key is not already present
 	// later we'll use sg.Tags to add/update tags
@@ -78,6 +78,7 @@ func (r *StateMachine) Normalize(ctx context.Context) {
 	if r.Publish == nil {
 		r.Publish = aws.Bool(false)
 	}
+	return nil
 }
 
 // Validate the state machine input
@@ -150,7 +151,11 @@ func (r StateMachine) Destroy(ctx context.Context) error {
 		return nil
 	}
 
-	client := client.SFN(ctx, r.Context.ProviderName)
+	client, err := client.SFN(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	_, err = client.DeleteStateMachine(ctx, &sfn.DeleteStateMachineInput{
 		StateMachineArn: existing.Arn,
 	})
@@ -290,8 +295,16 @@ func (r StateMachine) Compare(ctx context.Context) (ResourceDiff, error) {
 // fetchExisting fetches state machine if exists
 func (r StateMachine) fetchExisting(ctx context.Context) (*StateMachine, error) {
 
-	client := client.SFN(ctx, r.Context.ProviderName)
-	arn, err := awsw.NewSFN(ctx, r.Context.ProviderName).StateMachineArnForName(ctx, r.Identifier())
+	client, err := client.SFN(ctx, r.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
+	sfnSvc, err := awsw.NewSFN(ctx, r.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	arn, err := sfnSvc.StateMachineArnForName(ctx, r.Identifier())
 	if err != nil {
 		// don't throw the error when the state machine doesn't even exist
 		if arn == nil {
@@ -309,14 +322,23 @@ func (r StateMachine) fetchExisting(ctx context.Context) (*StateMachine, error) 
 	}
 
 	// version
-	versions, err := awsw.NewSFN(ctx, r.Context.ProviderName).StateMachineVersionsArnsForArn(ctx, *arn)
+	sfnSvc2, err := awsw.NewSFN(ctx, r.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	versions, err := sfnSvc2.StateMachineVersionsArnsForArn(ctx, *arn)
 	if err != nil {
 		return nil, err
 	}
 
 	var role *string
 	if out.RoleArn != nil {
-		role, err = awsw.NewIAM(ctx, r.Context.ProviderName).RoleNameForArn(ctx, *out.RoleArn)
+		var iamSvc awsw.IAM
+		iamSvc, err = awsw.NewIAM(ctx, r.Context.ProviderName)
+		if err != nil {
+			return nil, err
+		}
+		role, err = iamSvc.RoleNameForArn(ctx, *out.RoleArn)
 		if err != nil {
 			return nil, errors.Wrapf(err, "error fetching role name for state machine %v", r.Identifier())
 		}
@@ -354,7 +376,11 @@ func (r StateMachine) fetchExisting(ctx context.Context) (*StateMachine, error) 
 	}
 
 	// tags
-	tags, err := awsw.NewSFN(ctx, r.Context.ProviderName).GetResourceTags(ctx, *out.StateMachineArn)
+	sfnSvc3, err := awsw.NewSFN(ctx, r.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	tags, err := sfnSvc3.GetResourceTags(ctx, *out.StateMachineArn)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error fetching tags for state machine %v", r.Identifier())
 	}
@@ -380,7 +406,12 @@ func (r StateMachine) apply(ctx context.Context) error {
 	var err error
 
 	if r.Role != nil {
-		role, err = awsw.NewIAM(ctx, r.Context.ProviderName).RoleArnForName(ctx, *r.Role)
+		var iamSvc awsw.IAM
+		iamSvc, err = awsw.NewIAM(ctx, r.Context.ProviderName)
+		if err != nil {
+			return err
+		}
+		role, err = iamSvc.RoleArnForName(ctx, *r.Role)
 		if err != nil {
 			return errors.Wrapf(err, "error fetching role for name %v", *r.Role)
 		}
@@ -396,7 +427,11 @@ func (r StateMachine) apply(ctx context.Context) error {
 		tags = append(tags, types.Tag{Key: aws.String(k), Value: aws.String(v)})
 	}
 
-	client := client.SFN(ctx, r.Context.ProviderName)
+	client, err := client.SFN(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	out, err := client.CreateStateMachine(ctx, &sfn.CreateStateMachineInput{
 		Name:               aws.String(r.Identifier()),
 		Definition:         aws.String(r.Definition),
@@ -473,7 +508,12 @@ func (r StateMachine) applyDiffs(ctx context.Context, diffs ResourceDiff) error 
 		var err error
 		if r.Role != nil {
 			// if non-nil role supplied, then get the arn for it
-			arn, err = awsw.NewIAM(ctx, r.Context.ProviderName).RoleArnForName(ctx, *r.Role)
+			var iamSvc awsw.IAM
+			iamSvc, err = awsw.NewIAM(ctx, r.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			arn, err = iamSvc.RoleArnForName(ctx, *r.Role)
 			if err != nil {
 				return errors.Wrapf(err, "error fetching role arn for role %v", *r.Role)
 			}
@@ -491,7 +531,10 @@ func (r StateMachine) applyDiffs(ctx context.Context, diffs ResourceDiff) error 
 
 	// var err error
 	_ = existing
-	client := client.SFN(ctx, r.Context.ProviderName)
+	client, err := client.SFN(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	if configDiff {
 
@@ -517,7 +560,11 @@ func (r StateMachine) applyDiffs(ctx context.Context, diffs ResourceDiff) error 
 
 		if len(upserts) > 0 {
 			// add tag
-			err := awsw.NewSFN(ctx, r.Context.ProviderName).AddResourceTags(ctx, *existing.Arn, upserts)
+			sfnSvc, err := awsw.NewSFN(ctx, r.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			err = sfnSvc.AddResourceTags(ctx, *existing.Arn, upserts)
 			if err != nil {
 				return errors.Wrapf(err, "error tagging sfn resource")
 			}
@@ -525,7 +572,11 @@ func (r StateMachine) applyDiffs(ctx context.Context, diffs ResourceDiff) error 
 
 		if len(resDiffs.tagDiff.Deleted) > 0 {
 			// remove tag
-			err := awsw.NewSFN(ctx, r.Context.ProviderName).DeleteResourceTags(ctx, *existing.Arn, resDiffs.tagDiff.Deleted)
+			sfnSvc2, err := awsw.NewSFN(ctx, r.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			err = sfnSvc2.DeleteResourceTags(ctx, *existing.Arn, resDiffs.tagDiff.Deleted)
 			if err != nil {
 				return errors.Wrapf(err, "error un-tagging sfn resource")
 			}
@@ -568,7 +619,10 @@ func (r StateMachine) CreateAliases(ctx context.Context, aliases []StateMachineA
 		return errors.Errorf("invliad or nil state function arn supplied")
 	}
 
-	client := client.SFN(ctx, r.Context.ProviderName)
+	client, err := client.SFN(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	for _, alias := range aliases {
 
@@ -609,7 +663,10 @@ func (r StateMachine) CreateAliases(ctx context.Context, aliases []StateMachineA
 // filled
 func (r StateMachine) DeleteAliases(ctx context.Context, aliases []StateMachineAlias) error {
 
-	client := client.SFN(ctx, r.Context.ProviderName)
+	client, err := client.SFN(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	for _, alias := range aliases {
 
@@ -638,7 +695,11 @@ func (r StateMachine) UpdateAliases(ctx context.Context, aliases map[StateMachin
 		return errors.Errorf("invliad or nil state function arn supplied")
 	}
 
-	client := client.SFN(ctx, r.Context.ProviderName)
+	client, err := client.SFN(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	for def, exi := range aliases {
 
 		name := def.Name

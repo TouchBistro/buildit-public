@@ -20,8 +20,12 @@ type ELB struct {
 }
 
 // NewELB creates a new instance of ELBv2 wrapper
-func NewELB(ctx context.Context, providerName string) ELB {
-	return ELB{client.ELB(ctx, providerName)}
+func NewELB(ctx context.Context, providerName string) (ELB, error) {
+	c, err := client.ELB(ctx, providerName)
+	if err != nil {
+		return ELB{}, err
+	}
+	return ELB{c}, nil
 }
 
 // LoadBalancerArnForIdentifier resolves an ELBv2 Load Balancer ARN from an identifier (ARN or Name).
@@ -33,10 +37,12 @@ func (e ELB) LoadBalancerArnForIdentifier(ctx context.Context, identifier string
 
 	elbv2Service := e
 	if provider != "" {
-		if _, err := client.Provider(provider); err != nil {
-			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
+		var err error
+		elbv2Service, err = NewELB(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		elbv2Service = NewELB(ctx, provider)
+
 	}
 
 	// Direct lookup by Name
@@ -63,10 +69,12 @@ func (e ELB) TargetGroupArnForIdentifier(ctx context.Context, identifier string)
 
 	elbv2Service := e
 	if provider != "" {
-		if _, err := client.Provider(provider); err != nil {
-			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
+		var err error
+		elbv2Service, err = NewELB(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		elbv2Service = NewELB(ctx, provider)
+
 	}
 
 	// Direct lookup by Name

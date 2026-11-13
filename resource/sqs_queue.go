@@ -47,14 +47,14 @@ func (q SQSQueueAttributes) equals(other SQSQueueAttributes) bool {
 // SQSQueue represents an AWS SQS Queue.
 type SQSQueue struct {
 	BaseResource `yaml:",inline"`
-	Name       string             `yaml:"-"`
-	Policy     *IAMPolicyDocument `yaml:"policy"`
-	Attributes SQSQueueAttributes `yaml:"attributes"`
-	DependsOn  []Key              `yaml:"dependsOn"`
-	Tags       map[string]string  `yaml:"tags"`
-	GlobalTags map[string]string  `yaml:"-"`
-	queueName  string             // Parsed from Name
-	queueUrl   string             // retrieved by fetchExisting
+	Name         string             `yaml:"-"`
+	Policy       *IAMPolicyDocument `yaml:"policy"`
+	Attributes   SQSQueueAttributes `yaml:"attributes"`
+	DependsOn    []Key              `yaml:"dependsOn"`
+	Tags         map[string]string  `yaml:"tags"`
+	GlobalTags   map[string]string  `yaml:"-"`
+	queueName    string             // Parsed from Name
+	queueUrl     string             // retrieved by fetchExisting
 }
 
 // Key returns the unique key for the resource for this buildit context
@@ -68,7 +68,7 @@ func (q SQSQueue) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields.
-func (q *SQSQueue) Normalize(ctx context.Context) {
+func (q *SQSQueue) Normalize(ctx context.Context) error {
 	_, q.queueName = ParseName(q.Name)
 	// Set default values for fields where the default value is different from the zero value
 	// This makes it easier to do diffing when updating
@@ -114,6 +114,7 @@ func (q *SQSQueue) Normalize(ctx context.Context) {
 	}
 
 	ResourceTags(q.Tags).Merge(q.GlobalTags)
+	return nil
 }
 
 // Validate checks that the SQS Queue has a valid configuration.
@@ -225,7 +226,11 @@ func (q SQSQueue) Apply(ctx context.Context) error {
 // Destroy deletes the SQS Queue from AWS.
 func (q SQSQueue) Destroy(ctx context.Context) error {
 
-	sqsClient := client.SQS(ctx, q.Context.ProviderName)
+	sqsClient, err := client.SQS(ctx, q.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	log.WithField("Name", q.Identifier()).Info("Checking if SQS queue exists")
 	queue, err := q.fetchExisting(ctx)
 	if err != nil {
@@ -293,7 +298,11 @@ func (q SQSQueue) Compare(ctx context.Context) (ResourceDiff, error) {
 	}
 
 	// tags
-	awsTags, err := awsw.NewSQS(ctx, q.Context.ProviderName).GetQueueTags(ctx, existing.queueUrl)
+	sqsSvc, err := awsw.NewSQS(ctx, q.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	awsTags, err := sqsSvc.GetQueueTags(ctx, existing.queueUrl)
 	if err != nil {
 		return nil, err
 	}
@@ -313,7 +322,11 @@ func (q SQSQueue) Compare(ctx context.Context) (ResourceDiff, error) {
 
 // apply provision a new sqs queue
 func (q SQSQueue) apply(ctx context.Context) error {
-	sqsClient := client.SQS(ctx, q.Context.ProviderName)
+	sqsClient, err := client.SQS(ctx, q.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	log.WithField("Name", q.Identifier()).Debug("Creating SQS queue")
 
 	awsAttrs, err := sqsQueueToAttrs(q)
@@ -364,7 +377,10 @@ func (q SQSQueue) applyDiffs(ctx context.Context, diffs ResourceDiff) error {
 		return errors.Errorf("invalid existing sqs queue supplied")
 	}
 
-	sqsClient := client.SQS(ctx, q.Context.ProviderName)
+	sqsClient, err := client.SQS(ctx, q.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	// attributes & policy (policy is handled as a queue attribute)
 	if sqsDiffs.attrDiff || sqsDiffs.policyDiff {
@@ -383,18 +399,27 @@ func (q SQSQueue) applyDiffs(ctx context.Context, diffs ResourceDiff) error {
 	}
 
 	// tags
-	var err error
 	if sqsDiffs.tagsDiff {
 		upserts := sqsDiffs.tagDiff.Upserts()
 		if len(upserts) > 0 {
-			err = awsw.NewSQS(ctx, q.Context.ProviderName).AddQueueTags(ctx, existing.queueUrl, upserts)
+			var sqsSvc awsw.SQS
+			sqsSvc, err = awsw.NewSQS(ctx, q.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			err = sqsSvc.AddQueueTags(ctx, existing.queueUrl, upserts)
 			if err != nil {
 				return errors.Wrapf(err, "error updating queue tags for %v", q.Identifier())
 			}
 		}
 
 		if len(sqsDiffs.tagDiff.Deleted) > 0 {
-			err = awsw.NewSQS(ctx, q.Context.ProviderName).DeleteQueueTags(ctx, existing.queueUrl, sqsDiffs.tagDiff.Deleted)
+			var sqsSvc2 awsw.SQS
+			sqsSvc2, err = awsw.NewSQS(ctx, q.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			err = sqsSvc2.DeleteQueueTags(ctx, existing.queueUrl, sqsDiffs.tagDiff.Deleted)
 			if err != nil {
 				return errors.Wrapf(err, "error deleting queue tags for %v", q.Identifier())
 			}
@@ -412,7 +437,11 @@ func (q SQSQueue) applyDiffs(ctx context.Context, diffs ResourceDiff) error {
 // fetchExisting fetches the url & then the attributes of the sqs queue & returns
 // them in a buildit SQSQueue type
 func (q SQSQueue) fetchExisting(ctx context.Context) (*SQSQueue, error) {
-	sqsClient := client.SQS(ctx, q.Context.ProviderName)
+	sqsClient, err := client.SQS(ctx, q.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	// get queue url
 	outUrl, err := sqsClient.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{
 		QueueName: aws.String(q.queueName),

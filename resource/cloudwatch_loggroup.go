@@ -123,7 +123,7 @@ func (c CWLogGroup) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields.
-func (c *CWLogGroup) Normalize(ctx context.Context) {
+func (c *CWLogGroup) Normalize(ctx context.Context) error {
 
 	if c.Retention == nil {
 		c.Retention = aws.Int32(DefaultLogRetention)
@@ -134,6 +134,7 @@ func (c *CWLogGroup) Normalize(ctx context.Context) {
 		c.Tags = make(map[string]string)
 	}
 	ResourceTags(c.Tags).Merge(c.GlobalTags)
+	return nil
 }
 
 // Validate checks that the input provided is correct
@@ -196,7 +197,10 @@ func (c CWLogGroup) Apply(ctx context.Context) error {
 // Destroy removes the cloudwatch log group and any log metric filters
 func (c CWLogGroup) Destroy(ctx context.Context) error {
 
-	cwlClient := client.CloudWatchLogs(ctx, c.Context.ProviderName)
+	cwlClient, err := client.CloudWatchLogs(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	existing, err := c.fetchExisting(ctx)
 	if err != nil {
@@ -227,7 +231,11 @@ func (c CWLogGroup) Destroy(ctx context.Context) error {
 // fetchExisting returns the existing cloudwatch log group details if found
 func (c CWLogGroup) fetchExisting(ctx context.Context) (*CWLogGroup, error) {
 
-	cwlClient := client.CloudWatchLogs(ctx, c.Context.ProviderName)
+	cwlClient, err := client.CloudWatchLogs(ctx, c.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	done := false
 	var token *string
 
@@ -321,7 +329,11 @@ func (c CWLogGroup) Compare(ctx context.Context) (ResourceDiff, error) {
 
 	log.Debugf("updating cloudwatch log group for %v", c.Identifier())
 
-	awsTags, err := awsw.NewCloudWatchLogs(ctx, c.Context.ProviderName).GetResourceTags(ctx, *existing.Arn)
+	cwlSvc, err := awsw.NewCloudWatchLogs(ctx, c.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	awsTags, err := cwlSvc.GetResourceTags(ctx, *existing.Arn)
 	if err != nil {
 		return nil, err
 	}
@@ -397,8 +409,12 @@ func (c CWLogGroup) apply(ctx context.Context) error {
 	}
 
 	// kms
-	cwlClient := client.CloudWatchLogs(ctx, c.Context.ProviderName)
-	_, err := cwlClient.CreateLogGroup(ctx, &cloudwatchlogs.CreateLogGroupInput{
+	cwlClient, err := client.CloudWatchLogs(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
+	_, err = cwlClient.CreateLogGroup(ctx, &cloudwatchlogs.CreateLogGroupInput{
 		LogGroupName: aws.String(c.Name),
 		Tags:         tags,
 	})
@@ -455,7 +471,10 @@ func (c CWLogGroup) applyDiffs(ctx context.Context, diffs ResourceDiff) error {
 	}
 
 	// apply updates
-	cwlClient := client.CloudWatchLogs(ctx, c.Context.ProviderName)
+	cwlClient, err := client.CloudWatchLogs(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	if logDiffs.diffRetention {
 		_, err := cwlClient.PutRetentionPolicy(ctx, &cloudwatchlogs.PutRetentionPolicyInput{
@@ -494,14 +513,22 @@ func (c CWLogGroup) applyDiffs(ctx context.Context, diffs ResourceDiff) error {
 	if logDiffs.tagsDiff {
 		upserts := logDiffs.tagDiff.Upserts()
 		if len(upserts) > 0 {
-			err := awsw.NewCloudWatchLogs(ctx, c.Context.ProviderName).AddResourceTags(ctx, *existing.Arn, upserts)
+			cloudWatchLogsSvc, err := awsw.NewCloudWatchLogs(ctx, c.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			err = cloudWatchLogsSvc.AddResourceTags(ctx, *existing.Arn, upserts)
 			if err != nil {
 				return errors.Wrapf(err, "error updating cloudwatch loggroup tags for %v", c.Identifier())
 			}
 		}
 
 		if len(logDiffs.tagDiff.Deleted) > 0 {
-			err := awsw.NewCloudWatchLogs(ctx, c.Context.ProviderName).DeleteResourceTags(ctx, *existing.Arn, logDiffs.tagDiff.Deleted)
+			cloudWatchLogsSvc2, err := awsw.NewCloudWatchLogs(ctx, c.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			err = cloudWatchLogsSvc2.DeleteResourceTags(ctx, *existing.Arn, logDiffs.tagDiff.Deleted)
 			if err != nil {
 				return errors.Wrapf(err, "error deleting cloudwatch loggroup tags for %v", c.Identifier())
 			}

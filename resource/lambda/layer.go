@@ -54,11 +54,16 @@ func (r Layer) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields
-func (r *Layer) Normalize(ctx context.Context) {
+func (r *Layer) Normalize(ctx context.Context) error {
 
 	// fetch code checksum/size
+	s3Svc, err := awsw.NewS3(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 	r.Code._SHA256, r.Code._CodeSize, _ =
-		awsw.NewS3(ctx, r.Context.ProviderName).GetObjectChecksumAndSize(ctx, *r.Code.S3Bucket, *r.Code.Key, r.Code.ObjVersion)
+		s3Svc.GetObjectChecksumAndSize(ctx, *r.Code.S3Bucket, *r.Code.Key, r.Code.ObjVersion)
+	return nil
 }
 
 // Validate the lambda layer input
@@ -154,7 +159,10 @@ func (r Layer) Destroy(ctx context.Context) error {
 		return nil
 	}
 
-	client := client.Lambda(ctx, r.Context.ProviderName)
+	client, err := client.Lambda(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	done := false
 	var marker *string
@@ -279,7 +287,11 @@ func (r Layer) Compare(ctx context.Context) (resource.ResourceDiff, error) {
 // fetchExisting fetches lambda layer if exists
 func (r Layer) fetchExisting(ctx context.Context) (*Layer, error) {
 
-	client := client.Lambda(ctx, r.Context.ProviderName)
+	client, err := client.Lambda(ctx, r.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	out, err := client.ListLayerVersions(ctx, &lambda.ListLayerVersionsInput{
 		LayerName: aws.String(r.Name),
 	})
@@ -328,7 +340,10 @@ func (r Layer) fetchExisting(ctx context.Context) (*Layer, error) {
 // apply provisions a new lambda layer
 func (r Layer) apply(ctx context.Context) error {
 
-	client := client.Lambda(ctx, r.Context.ProviderName)
+	client, err := client.Lambda(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	var architectres []types.Architecture
 	for _, a := range r.Architectures {
@@ -431,7 +446,11 @@ func findLayerByArn(ctx context.Context, rctx resource.Context, arn *string) (*L
 		return nil, errors.New("nil arn supplied")
 	}
 
-	client := client.Lambda(ctx, rctx.ProviderName)
+	client, err := client.Lambda(ctx, rctx.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	out, err := client.GetLayerVersionByArn(ctx, &lambda.GetLayerVersionByArnInput{
 		Arn: arn,
 	})
@@ -471,7 +490,11 @@ func findLayerByArn(ctx context.Context, rctx resource.Context, arn *string) (*L
 // findLayerByNameAndVersion returns a Layer object by name & vesion number, else a non-nil error
 func findLayerByNameAndVersion(ctx context.Context, rctx resource.Context, name string, version int64) (*Layer, error) {
 
-	client := client.Lambda(ctx, rctx.ProviderName)
+	client, err := client.Lambda(ctx, rctx.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	out, err := client.GetLayerVersion(ctx, &lambda.GetLayerVersionInput{
 		LayerName:     aws.String(name),
 		VersionNumber: aws.Int64(version),

@@ -3,7 +3,6 @@ package awsw
 import (
 	"context"
 
-	"fmt"
 	"regexp"
 	"strings"
 
@@ -24,16 +23,24 @@ type ACM struct {
 }
 
 // NewACM creates a new instance of ACM wrapper
-func NewACM(ctx context.Context, providerName string) ACM {
-	return ACM{Client: client.ACM(ctx, providerName)}
+func NewACM(ctx context.Context, providerName string) (ACM, error) {
+	c, err := client.ACM(ctx, providerName)
+	if err != nil {
+		return ACM{}, err
+	}
+	return ACM{Client: c}, nil
 }
 
 // NewACMGlobal creates an ACM wrapper pinned to us-east-1 — the only region CloudFront
 // reads viewer certificates from, regardless of the provider's configured region.
 // Regional consumers (e.g. load balancer listeners, whose certificates must live in the
 // load balancer's own region) use NewACM.
-func NewACMGlobal(ctx context.Context, providerName string) ACM {
-	return ACM{Client: client.ACMGlobal(ctx, providerName), global: true}
+func NewACMGlobal(ctx context.Context, providerName string) (ACM, error) {
+	c, err := client.ACMGlobal(ctx, providerName)
+	if err != nil {
+		return ACM{}, err
+	}
+	return ACM{Client: c, global: true}, nil
 }
 
 // acmCertIDRegex matches an ACM certificate id — the UUID tail of a certificate ARN.
@@ -87,13 +94,20 @@ func (a ACM) FindCertificateByIdentifier(ctx context.Context, identifier string)
 
 	acmService := a
 	if provider != "" {
-		if _, err := client.Provider(provider); err != nil {
-			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
-		}
 		if a.global {
-			acmService = NewACMGlobal(ctx, provider)
+			var err error
+			acmService, err = NewACMGlobal(ctx, provider)
+			if err != nil {
+				return nil, err
+			}
+
 		} else {
-			acmService = NewACM(ctx, provider)
+			var err error
+			acmService, err = NewACM(ctx, provider)
+			if err != nil {
+				return nil, err
+			}
+
 		}
 	}
 

@@ -15,8 +15,12 @@ type MSK struct {
 }
 
 // NewMSK creates a new instance of MSK wrapper
-func NewMSK(ctx context.Context, providerName string) MSK {
-	return MSK{client.MSK(ctx, providerName)}
+func NewMSK(ctx context.Context, providerName string) (MSK, error) {
+	c, err := client.MSK(ctx, providerName)
+	if err != nil {
+		return MSK{}, err
+	}
+	return MSK{c}, nil
 }
 
 // AddResourceTags tags the MSK resourse with the supplied tag keys/value, returns error if thhe

@@ -40,7 +40,7 @@ type ApplicationAutoScaling struct {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields.
-func (a *ApplicationAutoScaling) Normalize(ctx context.Context) {
+func (a *ApplicationAutoScaling) Normalize(ctx context.Context) error {
 	for _, policy := range a.Policies {
 
 		policy.ResourceId = a.ResourceId
@@ -69,6 +69,7 @@ func (a *ApplicationAutoScaling) Normalize(ctx context.Context) {
 			}
 		}
 	}
+	return nil
 }
 
 // validate runs a ligher validation func on 3 key scaling parameters, resourceId, scalableDiminesion & serviceNamespace
@@ -148,7 +149,7 @@ func (a ApplicationAutoScaling) Validate(ctx context.Context) error {
 
 // Apply not implemented & not called directly for now...
 func (a ApplicationAutoScaling) Apply(ctx context.Context) error {
-	panic("unimplemented")
+	return errors.New("ApplicationAutoScaling.Apply is not implemented; it is applied through its ECS service")
 }
 
 // Delete scalable target & all associated policies & scheduled actions
@@ -406,9 +407,12 @@ func (a ApplicationAutoScaling) applyDiffs(ctx context.Context, rctx Context, di
 func (a ApplicationAutoScaling) registerScalableTarget(ctx context.Context, rctx Context) error {
 
 	// Set service as an auto-scaling target
-	aasClient := client.ApplicationAutoScaling(ctx, rctx.ProviderName)
+	aasClient, err := client.ApplicationAutoScaling(ctx, rctx.ProviderName)
+	if err != nil {
+		return err
+	}
 
-	_, err := aasClient.RegisterScalableTarget(ctx, &aas.RegisterScalableTargetInput{
+	_, err = aasClient.RegisterScalableTarget(ctx, &aas.RegisterScalableTargetInput{
 		MaxCapacity:       aws.Int32(a.MaxCapacity),
 		MinCapacity:       aws.Int32(a.MinCapacity),
 		ResourceId:        aws.String(a.ResourceId),
@@ -434,7 +438,10 @@ func (a ApplicationAutoScaling) registerScalableTarget(ctx context.Context, rctx
 // deRegisterScalableTarget de registers this as a scalable target for autoscaling
 func (a ApplicationAutoScaling) deRegisterScalableTarget(ctx context.Context, rctx Context) error {
 
-	aasClient := client.ApplicationAutoScaling(ctx, rctx.ProviderName)
+	aasClient, err := client.ApplicationAutoScaling(ctx, rctx.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	outrc, err := aasClient.DescribeScalableTargets(ctx, &aas.DescribeScalableTargetsInput{
 		ResourceIds:       []string{a.ResourceId},
@@ -472,7 +479,11 @@ func (a ApplicationAutoScaling) fetchExistingScalableTarget(ctx context.Context,
 		return nil, err
 	}
 
-	aasClient := client.ApplicationAutoScaling(ctx, rctx.ProviderName)
+	aasClient, err := client.ApplicationAutoScaling(ctx, rctx.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	outrc, err := aasClient.DescribeScalableTargets(ctx, &aas.DescribeScalableTargetsInput{
 		ResourceIds:       []string{a.ResourceId},
 		ScalableDimension: aastypes.ScalableDimension(a.ScalableDimension),
@@ -513,7 +524,10 @@ func (a *ApplicationAutoScaling) fetchAllExistingPolicies(ctx context.Context, r
 	}
 
 	pmap := make(map[string]interface{})
-	aasClient := client.ApplicationAutoScaling(ctx, rctx.ProviderName)
+	aasClient, err := client.ApplicationAutoScaling(ctx, rctx.ProviderName)
+	if err != nil {
+		return nil, err
+	}
 
 	// fetch scaling policies
 	outSp, err := aasClient.DescribeScalingPolicies(ctx, &aas.DescribeScalingPoliciesInput{

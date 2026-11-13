@@ -448,7 +448,7 @@ func (l LBRule) equals(ctx context.Context, rctx Context, rule *elbv2types.Rule)
 	return true
 }
 
-func (l *LBRule) Normalize(ctx context.Context, rctx Context) {
+func (l *LBRule) Normalize(ctx context.Context, rctx Context) error {
 
 	for _, a := range l.Actions {
 		if a.ActionType == AuthenticateOidcAction {
@@ -457,23 +457,33 @@ func (l *LBRule) Normalize(ctx context.Context, rctx Context) {
 			}
 
 			id := a.AuthenticateOidcConfig.ClientId
-			val, err := awsw.NewSecretsManager(ctx, rctx.ProviderName).GetValueBySecretId(ctx, id)
+			secretsManagerSvc, err := awsw.NewSecretsManager(ctx, rctx.ProviderName)
+			if err != nil {
+				return err
+			}
+			val, err := secretsManagerSvc.GetValueBySecretId(ctx, id)
 			if err != nil {
 				log.Warnf("error fetching client secret from %v", id)
-				panic(err)
+				return err
 			}
 			a.AuthenticateOidcConfig.ClientId = *val
 
 			sec := a.AuthenticateOidcConfig.ClientSecret
-			val, err = awsw.NewSecretsManager(ctx, rctx.ProviderName).GetValueBySecretId(ctx, sec)
+			var secretsManagerSvc2 awsw.SecretsManager
+			secretsManagerSvc2, err = awsw.NewSecretsManager(ctx, rctx.ProviderName)
+			if err != nil {
+				return err
+			}
+			val, err = secretsManagerSvc2.GetValueBySecretId(ctx, sec)
 			if err != nil {
 				log.Warnf("error fetching client secret from %v", sec)
-				panic(err)
+				return err
 			}
 			a.AuthenticateOidcConfig.ClientSecret = *val
 		}
 	}
 
+	return nil
 }
 
 // Identifier represents the unique id of a listener
@@ -525,7 +535,11 @@ func (l LBRule) update(ctx context.Context, rctx Context, existing *elbv2types.R
 		return errors.Wrap(err, "error parsing rule condition")
 	}
 
-	_, err = client.ELB(ctx, rctx.ProviderName).ModifyRule(ctx, &elbv2.ModifyRuleInput{
+	elbClient, elbClientErr := client.ELB(ctx, rctx.ProviderName)
+	if elbClientErr != nil {
+		return elbClientErr
+	}
+	_, err = elbClient.ModifyRule(ctx, &elbv2.ModifyRuleInput{
 		RuleArn:    existing.RuleArn,
 		Actions:    actions,
 		Conditions: conditions,
@@ -548,11 +562,13 @@ func (l LBRule) update(ctx context.Context, rctx Context, existing *elbv2types.R
 // Apply makes a load balancer listener
 func (l LBRule) Apply(ctx context.Context, rctx Context) error {
 
-	client := client.ELB(ctx, rctx.ProviderName)
+	client, err := client.ELB(ctx, rctx.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	var actions []elbv2types.Action
 	var conditions []elbv2types.RuleCondition
-	var err error
 
 	actions, err = l.toAwsActions(ctx, rctx)
 	if err != nil {
@@ -597,7 +613,11 @@ func (l LBRule) Apply(ctx context.Context, rctx Context) error {
 
 // Destroy removes the rule
 func (l LBRule) Destroy(ctx context.Context, rctx Context) error {
-	_, err := client.ELB(ctx, rctx.ProviderName).DeleteRule(ctx, &elbv2.DeleteRuleInput{
+	elbClient, err := client.ELB(ctx, rctx.ProviderName)
+	if err != nil {
+		return err
+	}
+	_, err = elbClient.DeleteRule(ctx, &elbv2.DeleteRuleInput{
 		RuleArn: &l.RuleArn,
 	})
 	if err != nil {
@@ -642,7 +662,10 @@ func (l LBRule) toAwsRuleConditions() ([]elbv2types.RuleCondition, error) {
 
 // targetGroupNametoArn returns the target group arn for name
 func targetGroupNametoArn(ctx context.Context, rctx Context, name string) (string, error) {
-	client := client.ELB(ctx, rctx.ProviderName)
+	client, err := client.ELB(ctx, rctx.ProviderName)
+	if err != nil {
+		return "", err
+	}
 
 	out, err := client.DescribeTargetGroups(ctx, &elbv2.DescribeTargetGroupsInput{
 		Names: []string{name},

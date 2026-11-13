@@ -121,7 +121,7 @@ func (t LBTargetGroup) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields.
-func (t *LBTargetGroup) Normalize(ctx context.Context) {
+func (t *LBTargetGroup) Normalize(ctx context.Context) error {
 
 	if t.Algorithm == "" {
 		t.Algorithm = LeastOutstandingRequests
@@ -152,6 +152,7 @@ func (t *LBTargetGroup) Normalize(ctx context.Context) {
 		t.Tags = make(map[string]string)
 	}
 	ResourceTags(t.Tags).Merge(t.GlobalTags)
+	return nil
 }
 
 // Validate checks that the TargetGroup has a valid configuration.
@@ -323,7 +324,11 @@ func (t LBTargetGroup) Destroy(ctx context.Context) error {
 		return nil
 	}
 
-	elbClient := client.ELB(ctx, t.Context.ProviderName)
+	elbClient, err := client.ELB(ctx, t.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	_, err = elbClient.DeleteTargetGroup(ctx, &elbv2.DeleteTargetGroupInput{
 		TargetGroupArn: awsTG.TargetGroupArn,
 	})
@@ -372,19 +377,27 @@ func (t LBTargetGroup) Compare(ctx context.Context) (ResourceDiff, error) {
 	}
 
 	// vpc
-	vpcID, err := awsw.NewEC2(ctx, t.Context.ProviderName).VpcIdByName(ctx, t.VPCName)
+	ec2Svc, err := awsw.NewEC2(ctx, t.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	vpcID, err := ec2Svc.VpcIdByName(ctx, t.VPCName)
 	if err != nil {
 		return nil, errors.Wrap(err, "error getting vpc id")
 	}
 
 	// attributes
-	awsAttrs, err := awsw.NewELB(ctx, t.Context.ProviderName).DescribeTargetGroupAttributesByArn(ctx, *existing.TargetGroupArn)
+	elbSvc, err := awsw.NewELB(ctx, t.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	awsAttrs, err := elbSvc.DescribeTargetGroupAttributesByArn(ctx, *existing.TargetGroupArn)
 	if err != nil {
 		return nil, err
 	}
 
 	// tags
-	awsTags, err := awsw.NewELB(ctx, t.Context.ProviderName).GetResourceTags(ctx, *existing.TargetGroupArn)
+	awsTags, err := elbSvc.GetResourceTags(ctx, *existing.TargetGroupArn)
 	if err != nil {
 		return nil, err
 	}
@@ -566,7 +579,11 @@ func (t LBTargetGroup) healthcheckChanges(existing *elbv2types.TargetGroup) []Ch
 // fetchExisting fetches the existing target group
 func (t LBTargetGroup) fetchExisting(ctx context.Context) (*elbv2types.TargetGroup, error) {
 
-	elbClient := client.ELB(ctx, t.Context.ProviderName)
+	elbClient, err := client.ELB(ctx, t.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	respDescribeTGs, err := elbClient.DescribeTargetGroups(ctx, &elbv2.DescribeTargetGroupsInput{
 		Names: []string{t.Name},
 	})
@@ -589,9 +606,16 @@ func (t LBTargetGroup) fetchExisting(ctx context.Context) (*elbv2types.TargetGro
 // apply creates/updates the load balancer target group
 func (t LBTargetGroup) apply(ctx context.Context) error {
 
-	elbClient := client.ELB(ctx, t.Context.ProviderName)
+	elbClient, err := client.ELB(ctx, t.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
-	vpcid, err := awsw.NewEC2(ctx, t.Context.ProviderName).VpcIdByName(ctx, t.VPCName)
+	ec2Svc, err := awsw.NewEC2(ctx, t.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+	vpcid, err := ec2Svc.VpcIdByName(ctx, t.VPCName)
 	if err != nil {
 		return errors.Wrap(err, "error getting VPC Id")
 	}
@@ -761,7 +785,10 @@ func (t LBTargetGroup) applyDiffs(ctx context.Context, diffs ResourceDiff) error
 		return errors.New("Cannot modify target group target type")
 	}
 
-	elbClient := client.ELB(ctx, t.Context.ProviderName)
+	elbClient, err := client.ELB(ctx, t.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	// healthcheck
 	if tgDiffs.healthcheckDiff {
@@ -796,13 +823,21 @@ func (t LBTargetGroup) applyDiffs(ctx context.Context, diffs ResourceDiff) error
 	if tgDiffs.tagsDiff {
 		upserts := tgDiffs.tagDiff.Upserts()
 		if len(upserts) > 0 {
-			if err := awsw.NewELB(ctx, t.Context.ProviderName).AddResourceTags(ctx, tgDiffs.targetGroupArn, upserts); err != nil {
+			elbSvc, err := awsw.NewELB(ctx, t.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			if err := elbSvc.AddResourceTags(ctx, tgDiffs.targetGroupArn, upserts); err != nil {
 				return errors.Wrapf(err, "error updating target group tags for %v", t.Identifier())
 			}
 		}
 
 		if len(tgDiffs.tagDiff.Deleted) > 0 {
-			if err := awsw.NewELB(ctx, t.Context.ProviderName).DeleteResourceTags(ctx, tgDiffs.targetGroupArn, tgDiffs.tagDiff.Deleted); err != nil {
+			elbSvc2, err := awsw.NewELB(ctx, t.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			if err := elbSvc2.DeleteResourceTags(ctx, tgDiffs.targetGroupArn, tgDiffs.tagDiff.Deleted); err != nil {
 				return errors.Wrapf(err, "error deleting target group tags for %v", t.Identifier())
 			}
 		}
@@ -874,7 +909,11 @@ func (t LBTargetGroup) registerTargets(ctx context.Context, targetGroupArn strin
 	if err != nil {
 		return errors.Wrap(err, "error building a target description list")
 	}
-	elbClient := client.ELB(ctx, t.Context.ProviderName)
+	elbClient, err := client.ELB(ctx, t.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	_, err = elbClient.RegisterTargets(ctx, &elbv2.RegisterTargetsInput{
 		TargetGroupArn: aws.String(targetGroupArn),
 		Targets:        targetDesc,
@@ -892,7 +931,11 @@ func (t LBTargetGroup) deRegisterTargets(ctx context.Context, targetGroupArn str
 	if err != nil {
 		return errors.Wrap(err, "error building a target description list")
 	}
-	elbClient := client.ELB(ctx, t.Context.ProviderName)
+	elbClient, err := client.ELB(ctx, t.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	_, err = elbClient.DeregisterTargets(ctx, &elbv2.DeregisterTargetsInput{
 		TargetGroupArn: aws.String(targetGroupArn),
 		Targets:        targetDesc,
@@ -1021,7 +1064,10 @@ func parseIPPort(ipPort string) (string, int32, string, error) {
 // as ip:port@ strings
 func targetsForTargetGroup(ctx context.Context, rctx Context, targetGroupArn string) ([]string, error) {
 
-	elbClient := client.ELB(ctx, rctx.ProviderName)
+	elbClient, err := client.ELB(ctx, rctx.ProviderName)
+	if err != nil {
+		return nil, err
+	}
 
 	targets, err := elbClient.DescribeTargetHealth(ctx, &elbv2.DescribeTargetHealthInput{
 		TargetGroupArn: &targetGroupArn,

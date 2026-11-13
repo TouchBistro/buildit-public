@@ -44,7 +44,7 @@ type IAMPolicyDocument struct {
 
 // IAMPolicy represents an IAM Policy
 type IAMPolicy struct {
-	BaseResource `yaml:",inline"`
+	BaseResource     `yaml:",inline"`
 	Name             string            `yaml:"-"` // Name consists of the path and policy name. ex: buildit/resource-policy
 	Description      string            `yaml:"description"`
 	Policy           IAMPolicyDocument `yaml:"policy"` // Policy is the policy document represented as a JSON object
@@ -83,7 +83,7 @@ func (p IAMPolicy) PathAndName() (string, string) {
 }
 
 // Normalize will perform any necessary validations to the IAM policy and set any default values.
-func (p *IAMPolicy) Normalize(ctx context.Context) {
+func (p *IAMPolicy) Normalize(ctx context.Context) error {
 
 	p.Policy.fixMapKeys()
 
@@ -93,6 +93,7 @@ func (p *IAMPolicy) Normalize(ctx context.Context) {
 		p.Tags = make(map[string]string)
 	}
 	ResourceTags(p.Tags).Merge(p.GlobalTags)
+	return nil
 }
 
 // Validate checks that the IAM policy has a valid configuration.
@@ -178,7 +179,11 @@ func (p IAMPolicy) Destroy(ctx context.Context) error {
 	}
 
 	// delete policy
-	iamClient := client.IAM(ctx, p.Context.ProviderName)
+	iamClient, err := client.IAM(ctx, p.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	_, err = iamClient.DeletePolicy(ctx, &iam.DeletePolicyInput{
 		PolicyArn: aws.String(awsPolicy.Arn),
 	})
@@ -259,7 +264,11 @@ func (p IAMPolicy) Compare(ctx context.Context) (ResourceDiff, error) {
 // buildit type, rather than /services/iam/types/** object
 func (p IAMPolicy) fetchExisting(ctx context.Context) (*IAMPolicy, error) {
 
-	iamClient := client.IAM(ctx, p.Context.ProviderName)
+	iamClient, err := client.IAM(ctx, p.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	var nextToken *string
 
 	// Cache the path and policy name so we don't need to compute it every time
@@ -328,7 +337,10 @@ func (p IAMPolicy) fetchExisting(ctx context.Context) (*IAMPolicy, error) {
 // apply provisions a new iam policy
 func (p IAMPolicy) apply(ctx context.Context) error {
 
-	iamClient := client.IAM(ctx, p.Context.ProviderName)
+	iamClient, err := client.IAM(ctx, p.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	policyJSON, err := json.Marshal(p.Policy)
 	if err != nil {
@@ -407,7 +419,10 @@ func (p IAMPolicy) applyDiffs(ctx context.Context, diffs ResourceDiff) error {
 		// 2. Set the new version as the default version
 		// 3. Delete the old version
 
-		iamClient := client.IAM(ctx, p.Context.ProviderName)
+		iamClient, err := client.IAM(ctx, p.Context.ProviderName)
+		if err != nil {
+			return err
+		}
 
 		policyJson, err := json.Marshal(p.Policy)
 		if err != nil {
@@ -425,7 +440,11 @@ func (p IAMPolicy) applyDiffs(ctx context.Context, diffs ResourceDiff) error {
 		}
 
 		newVersionId := out.PolicyVersion.VersionId
-		vers, defaultVer, err := awsw.NewIAM(ctx, p.Context.ProviderName).ListPolicyVersionIds(ctx, existing.Arn)
+		iamSvc, err := awsw.NewIAM(ctx, p.Context.ProviderName)
+		if err != nil {
+			return err
+		}
+		vers, defaultVer, err := iamSvc.ListPolicyVersionIds(ctx, existing.Arn)
 		if err != nil {
 			return errors.Wrapf(err, "error fetching version Ids for policy arn %v", p.Identifier())
 		}
@@ -454,13 +473,23 @@ func (p IAMPolicy) applyDiffs(ctx context.Context, diffs ResourceDiff) error {
 		upserts := polDiffs.tagDiff.Upserts()
 
 		if len(upserts) > 0 {
-			err = awsw.NewIAM(ctx, p.Context.ProviderName).AddPolicyTags(ctx, existing.Arn, upserts)
+			var iamSvc2 awsw.IAM
+			iamSvc2, err = awsw.NewIAM(ctx, p.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			err = iamSvc2.AddPolicyTags(ctx, existing.Arn, upserts)
 			if err != nil {
 				return errors.Wrapf(err, "error updating iam policy tags for %v", p.Identifier())
 			}
 		}
 		if len(polDiffs.tagDiff.Deleted) > 0 {
-			err = awsw.NewIAM(ctx, p.Context.ProviderName).DeletePolicyTags(ctx, existing.Arn, polDiffs.tagDiff.Deleted)
+			var iamSvc3 awsw.IAM
+			iamSvc3, err = awsw.NewIAM(ctx, p.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			err = iamSvc3.DeletePolicyTags(ctx, existing.Arn, polDiffs.tagDiff.Deleted)
 			if err != nil {
 				return errors.Wrapf(err, "error deleting iam policy tags for %v", p.Identifier())
 			}
@@ -496,7 +525,10 @@ func (d *IAMPolicyDocument) fixMapKeys() {
 // deleteNotDefaultPolicyVersions find & delete all non-default policy version for this policy in aws
 // TODO: @esiddiqui move to awsw utils
 func deleteNotDefaultPolicyVersions(ctx context.Context, arn, defaultVersionId string, providerName string) error {
-	iamClient := client.IAM(ctx, providerName)
+	iamClient, err := client.IAM(ctx, providerName)
+	if err != nil {
+		return err
+	}
 
 	// get all policy version & delete no defaults
 	var marker *string

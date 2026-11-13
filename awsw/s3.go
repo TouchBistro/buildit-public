@@ -16,8 +16,12 @@ type S3 struct {
 	*s3.Client
 }
 
-func NewS3(ctx context.Context, providerName string) S3 {
-	return S3{client.S3(ctx, providerName)}
+func NewS3(ctx context.Context, providerName string) (S3, error) {
+	c, err := client.S3(ctx, providerName)
+	if err != nil {
+		return S3{}, err
+	}
+	return S3{c}, nil
 }
 
 // GetObjectChecksumAndSize reads the object's SHA256 checksum & size in bytes; passes the Range header options with
@@ -86,7 +90,12 @@ func (s S3) BucketArnFromName(ctx context.Context, name string) (*string, error)
 	provider, bucketName := ParseName(name)
 	s3Client := s.Client
 	if provider != "" {
-		s3Client = client.S3(ctx, provider)
+		var err error
+		s3Client, err = client.S3(ctx, provider)
+		if err != nil {
+			return nil, err
+		}
+
 	}
 
 	_, err := s3Client.HeadBucket(ctx, &s3.HeadBucketInput{
@@ -110,11 +119,12 @@ func (s S3) BucketArnForIdentifier(ctx context.Context, identifier string) (*str
 
 	s3Client := s.Client
 	if provider != "" {
-		// Verify provider exists to avoid fatal error in client.S3
-		if _, err := client.Provider(provider); err != nil {
-			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
+		var err error
+		s3Client, err = client.S3(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		s3Client = client.S3(ctx, provider)
+
 	}
 
 	_, err := s3Client.HeadBucket(ctx, &s3.HeadBucketInput{

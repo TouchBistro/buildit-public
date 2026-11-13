@@ -36,7 +36,7 @@ const (
 // - Anomaly Detection Alarms
 // Refence: put ECS autoscaling https://docs.aws.amazon.com/autoscaling/application/userguide/create-step-scaling-policy-cli.html
 type CWMetricAlarm struct {
-	BaseResource `yaml:",inline"`
+	BaseResource            `yaml:",inline"`
 	Name                    string            `yaml:"-"`
 	Description             string            `yaml:"description"`
 	MetricName              string            `yaml:"metricName"`              // name for the metric associated
@@ -70,7 +70,7 @@ func (c CWMetricAlarm) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields.
-func (c *CWMetricAlarm) Normalize(ctx context.Context) {
+func (c *CWMetricAlarm) Normalize(ctx context.Context) error {
 
 	if c.Statistic == "" {
 		c.Statistic = string(cloudwatchtypes.StatisticSum) // default is SUM
@@ -108,6 +108,7 @@ func (c *CWMetricAlarm) Normalize(ctx context.Context) {
 	// merge global tags into resource level tags
 	ResourceTags(c.Tags).Merge(c.GlobalTags)
 
+	return nil
 }
 
 // Validate checks that the input provided is correct
@@ -203,7 +204,11 @@ func (c CWMetricAlarm) Destroy(ctx context.Context) error {
 		return nil
 	}
 
-	cwClient := client.CloudWatch(ctx, c.Context.ProviderName)
+	cwClient, err := client.CloudWatch(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	_, err = cwClient.DeleteAlarms(ctx, &cloudwatch.DeleteAlarmsInput{
 		AlarmNames: []string{c.Name},
 	})
@@ -364,7 +369,11 @@ func (c CWMetricAlarm) Compare(ctx context.Context) (ResourceDiff, error) {
 		return nil, errors.Errorf("cloudwatch metric alarm %v has an incomplete response, missing alarm arn", c.Identifier())
 	}
 	diffs.alarmArn = *existing.AlarmArn
-	awsTags, err := awsw.NewCloudWatch(ctx, c.Context.ProviderName).GetResourceTags(ctx, diffs.alarmArn)
+	cloudWatchSvc, err := awsw.NewCloudWatch(ctx, c.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	awsTags, err := cloudWatchSvc.GetResourceTags(ctx, diffs.alarmArn)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error fetching tags for cloudwatch metric alarm %v", c.Identifier())
 	}
@@ -416,7 +425,11 @@ func (c CWMetricAlarm) apply(ctx context.Context) error {
 		return errors.Wrapf(err, "error converting alarm action supplied to a value arn")
 	}
 
-	cwClient := client.CloudWatch(ctx, c.Context.ProviderName)
+	cwClient, err := client.CloudWatch(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	_, err = cwClient.PutMetricAlarm(ctx, &cloudwatch.PutMetricAlarmInput{
 		AlarmName:               aws.String(c.Name),
 		AlarmDescription:        aws.String(c.Description),
@@ -466,7 +479,11 @@ func (c CWMetricAlarm) applyDiffs(ctx context.Context, diffs ResourceDiff) error
 	// AWS ignores PutMetricAlarm's Tags on an existing alarm, so tag changes are applied
 	// separately against the alarm ARN
 	if alarmDiffs.tagsDiff {
-		cwService := awsw.NewCloudWatch(ctx, c.Context.ProviderName)
+		cwService, err := awsw.NewCloudWatch(ctx, c.Context.ProviderName)
+		if err != nil {
+			return err
+		}
+
 		if upserts := alarmDiffs.tagDiff.Upserts(); len(upserts) > 0 {
 			if err := cwService.AddResourceTags(ctx, alarmDiffs.alarmArn, upserts); err != nil {
 				return errors.Wrapf(err, "error updating tags for cloudwatch metric alarm %v", c.Identifier())
@@ -485,7 +502,10 @@ func (c CWMetricAlarm) applyDiffs(ctx context.Context, diffs ResourceDiff) error
 // fetchExisting returns the existing cloudwatch alarm details if found
 func (c CWMetricAlarm) fetchExisting(ctx context.Context) (*cloudwatchtypes.MetricAlarm, error) {
 
-	cwClient := client.CloudWatch(ctx, c.Context.ProviderName)
+	cwClient, err := client.CloudWatch(ctx, c.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
 
 	descOut, err := cwClient.DescribeAlarms(ctx, &cloudwatch.DescribeAlarmsInput{
 		AlarmNames: []string{c.Identifier()},
@@ -650,7 +670,11 @@ func alarmActiontoArn(ctx context.Context, providerName string, key, value strin
 		return "", errors.Errorf("an in-valid SNS topic arn supplied for alarm action key %v", key)
 
 	case AlarmActionAutoscaling: // "autoscaling"
-		aasClient := client.ApplicationAutoScaling(ctx, providerName)
+		aasClient, err := client.ApplicationAutoScaling(ctx, providerName)
+		if err != nil {
+			return "", err
+		}
+
 		descOut, err := aasClient.DescribeScalingPolicies(ctx, &applicationautoscaling.DescribeScalingPoliciesInput{
 			ServiceNamespace: applicationautoscalingtypes.ServiceNamespaceEcs,
 			PolicyNames:      []string{value},
@@ -679,7 +703,11 @@ func alarmActiontoArn(ctx context.Context, providerName string, key, value strin
 // loadBalancerToDimensionValue find the metric dimension name for a load balancer for the
 // supplied load balancer name, else an error
 func loadBalancerToDimensionValue(ctx context.Context, providerName string, name string) (string, error) {
-	elbClient := client.ELB(ctx, providerName)
+	elbClient, err := client.ELB(ctx, providerName)
+	if err != nil {
+		return "", err
+	}
+
 	out, err := elbClient.DescribeLoadBalancers(ctx, &elbv2.DescribeLoadBalancersInput{
 		Names: []string{name},
 	})

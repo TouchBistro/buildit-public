@@ -14,8 +14,12 @@ type Glue struct {
 	*glue.Client
 }
 
-func NewGlue(ctx context.Context, providerName string) Glue {
-	return Glue{client.Glue(ctx, providerName)}
+func NewGlue(ctx context.Context, providerName string) (Glue, error) {
+	c, err := client.Glue(ctx, providerName)
+	if err != nil {
+		return Glue{}, err
+	}
+	return Glue{c}, nil
 }
 
 // CatalogArnForIdentifier resolves a Glue Catalog ARN from an identifier (ARN, catalog ID, or catalog name).
@@ -27,10 +31,12 @@ func (g Glue) CatalogArnForIdentifier(ctx context.Context, identifier string) (*
 
 	glueService := g
 	if provider != "" {
-		if _, err := client.Provider(provider); err != nil {
-			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
+		var err error
+		glueService, err = NewGlue(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		glueService = NewGlue(ctx, provider)
+
 	}
 
 	if strings.EqualFold(resource, "catalog") {
@@ -38,7 +44,11 @@ func (g Glue) CatalogArnForIdentifier(ctx context.Context, identifier string) (*
 		if stsProvider == "" {
 			stsProvider = client.MainProvider
 		}
-		stsClient := NewSTS(ctx, stsProvider)
+		stsClient, err := NewSTS(ctx, stsProvider)
+		if err != nil {
+			return nil, err
+		}
+
 		accountID, err := stsClient.GetAccountID(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get account ID for glue catalog lookup: %w", err)

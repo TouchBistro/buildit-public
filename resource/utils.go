@@ -74,14 +74,23 @@ func SplitNameQualifier(fullyQualifiedName string) (string, *string) {
 // [providerName/]secretId:secretProperty : the trailing string after the first colon ":" is used as the
 // json-key[:version-stage[:version-id]] and returned as-is
 func secretArnFromName(ctx context.Context, rctx Context, id string) (string, error) {
-	smClient := client.SecretsManager(ctx, rctx.ProviderName)
+	smClient, err := client.SecretsManager(ctx, rctx.ProviderName)
+	if err != nil {
+		return "", err
+	}
+
 	index := strings.Index(id, "/")
 
 	secretID := id
 	if index != -1 {
 		providerName := id[:index]
 		secretID = id[index+1:]
-		smClient = client.SecretsManager(ctx, providerName)
+		var err error
+		smClient, err = client.SecretsManager(ctx, providerName)
+		if err != nil {
+			return "", err
+		}
+
 	}
 
 	//check if json-key, version-stage, version-id exists

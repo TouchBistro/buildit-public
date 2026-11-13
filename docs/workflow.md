@@ -24,7 +24,7 @@ Next ***buildit** generates a stream of bytes for each config files, after inclu
 If variable values are not supplied at runtime, template reference cannot be resolved, or resources have missing or circular dependencies, **buildit** will report an error an exit. 
 
 ### Step 5: Normalize
-Once a valid DAG is built, all defined resources are normalized. Normalization includes setting default values for attributes that are not supplied, and also converting any values from `buildit` representation to internal AWS representation like constants or enumerated values etc.
+Once a valid DAG is built, all defined resources are normalized. Normalization includes setting default values for attributes that are not supplied, and also converting any values from `buildit` representation to internal AWS representation like constants or enumerated values etc. A resource whose normalization fails (a referenced topic, secret or role that cannot be found) is reported as a validation error together with every other problem found in the config.
 
 ### Step 6: Validation
 After normalization, ***buildit** runs a semantic valiation. This step checks the input attributes supplied & reports any possible errors it could detect. This step may not find all possible issues, especially the ones that are only known at runtime. At this point, an AWS dry-run is not attempted. It however does a best effort validation to prevent running buggy configuration that may cause errors during execution.

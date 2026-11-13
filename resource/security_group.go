@@ -69,7 +69,7 @@ func (sg SecurityGroup) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields
-func (sg *SecurityGroup) Normalize(ctx context.Context) {
+func (sg *SecurityGroup) Normalize(ctx context.Context) error {
 
 	// Merge globalTags to security group tags, if key is not already present
 	// later we'll use sg.Tags to add/update tags
@@ -82,6 +82,7 @@ func (sg *SecurityGroup) Normalize(ctx context.Context) {
 	if !ResourceTags(sg.Tags).Contains("Name") {
 		sg.Tags["Name"] = sg.Identifier()
 	}
+	return nil
 }
 
 // mergeSecurityGroupRules merges the other [] of security group rules into this
@@ -253,7 +254,11 @@ func (sg SecurityGroup) Destroy(ctx context.Context) error {
 		return nil
 	}
 
-	ec2Client := client.EC2(ctx, sg.Context.ProviderName)
+	ec2Client, err := client.EC2(ctx, sg.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	log.Debugf("waiting until the security group %v has no associations", sg.Identifier())
 	err = waitUntilSecurityGroupDisassociated(ctx, sg.Context, *existing.GroupId, 15) //15 retries, 15s apart
 	if err != nil {
@@ -304,7 +309,11 @@ func (sg SecurityGroup) Compare(ctx context.Context) (ResourceDiff, error) {
 		return diffs, nil
 	}
 
-	sgVpcId, err := awsw.NewEC2(ctx, sg.Context.ProviderName).VpcIdByName(ctx, sg.VPCName)
+	ec2Svc, err := awsw.NewEC2(ctx, sg.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	sgVpcId, err := ec2Svc.VpcIdByName(ctx, sg.VPCName)
 	if err != nil {
 		return nil, err
 	}
@@ -327,7 +336,7 @@ func (sg SecurityGroup) Compare(ctx context.Context) (ResourceDiff, error) {
 		return nil, errors.Wrap(err, "error normalizing existing egress security group rules")
 	}
 
-	awsTags, err := awsw.NewEC2(ctx, sg.Context.ProviderName).GetResourceTags(ctx, *existing.GroupId)
+	awsTags, err := ec2Svc.GetResourceTags(ctx, *existing.GroupId)
 	if err != nil {
 		return nil, err
 	}
@@ -432,7 +441,10 @@ func (sg SecurityGroup) fetchExisting(ctx context.Context) (*ec2types.SecurityGr
 // apply provisions a new security group
 func (sg SecurityGroup) apply(ctx context.Context) error {
 
-	ec2Client := client.EC2(ctx, sg.Context.ProviderName)
+	ec2Client, err := client.EC2(ctx, sg.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	// faltten & validate ingress & egress rules to make sure there are not duplicates
 	// before we even create the security group
@@ -449,7 +461,11 @@ func (sg SecurityGroup) apply(ctx context.Context) error {
 	egressPermissions := sgRulesToIpPermissions(egress)
 
 	// fetch vpc id
-	vpcid, err := awsw.NewEC2(ctx, sg.Context.ProviderName).VpcIdByName(ctx, sg.VPCName)
+	ec2Svc, err := awsw.NewEC2(ctx, sg.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+	vpcid, err := ec2Svc.VpcIdByName(ctx, sg.VPCName)
 	if err != nil {
 		return errors.Wrap(err, "failed looking up vpc id")
 	}
@@ -496,7 +512,12 @@ func (sg SecurityGroup) apply(ctx context.Context) error {
 	}
 
 	// Add tags
-	err = awsw.NewEC2(ctx, sg.Context.ProviderName).AddResourceTags(ctx, *respCreateSecurityGroup.GroupId, sg.Tags)
+	var ec2Svc2 awsw.EC2
+	ec2Svc2, err = awsw.NewEC2(ctx, sg.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+	err = ec2Svc2.AddResourceTags(ctx, *respCreateSecurityGroup.GroupId, sg.Tags)
 
 	if err != nil {
 		return errors.Wrapf(err, "error adding tags to security group %v", sg.Identifier())
@@ -556,7 +577,10 @@ func (sg SecurityGroup) applyDiffs(ctx context.Context, diffs ResourceDiff) erro
 	}
 
 	var err error
-	client := client.EC2(ctx, sg.Context.ProviderName)
+	client, err := client.EC2(ctx, sg.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	//ingress rules
 	if sgDiffs.ingressDiff {
@@ -623,14 +647,24 @@ func (sg SecurityGroup) applyDiffs(ctx context.Context, diffs ResourceDiff) erro
 		upserts := sgDiffs.tagDiff.Upserts()
 
 		if len(upserts) > 0 {
-			err = awsw.NewEC2(ctx, sg.Context.ProviderName).AddResourceTags(ctx, *existing.GroupId, upserts)
+			var ec2Svc awsw.EC2
+			ec2Svc, err = awsw.NewEC2(ctx, sg.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			err = ec2Svc.AddResourceTags(ctx, *existing.GroupId, upserts)
 			if err != nil {
 				return errors.Wrapf(err, "error updating security group tags for %v", sg.Identifier())
 			}
 		}
 
 		if len(sgDiffs.tagDiff.Deleted) > 0 {
-			err = awsw.NewEC2(ctx, sg.Context.ProviderName).DeleteResourceTags(ctx, *existing.GroupId, sgDiffs.tagDiff.Deleted)
+			var ec2Svc2 awsw.EC2
+			ec2Svc2, err = awsw.NewEC2(ctx, sg.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			err = ec2Svc2.DeleteResourceTags(ctx, *existing.GroupId, sgDiffs.tagDiff.Deleted)
 			if err != nil {
 				return errors.Wrapf(err, "error deleting security group tags for %v", sg.Identifier())
 			}
@@ -648,7 +682,10 @@ func (sg SecurityGroup) applyDiffs(ctx context.Context, diffs ResourceDiff) erro
 // waitUntilSecurityGroupDisassociated will wait until the specified security group is associated with
 // a network interface. the call will fail after retrying the specified times.
 func waitUntilSecurityGroupDisassociated(ctx context.Context, rctx Context, id string, maxRetries int64) error {
-	ec2Client := client.EC2(ctx, rctx.ProviderName)
+	ec2Client, err := client.EC2(ctx, rctx.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	for tries := 0; int64(tries) < maxRetries; tries++ {
 		respInterface, err := ec2Client.DescribeNetworkInterfaces(ctx, &ec2.DescribeNetworkInterfacesInput{
@@ -973,7 +1010,11 @@ func securityGroupByName(ctx context.Context, rctx Context, name string) (*ec2ty
 		sgName = name[i+1:]
 	}
 
-	ec2Client := client.EC2(ctx, providerName)
+	ec2Client, err := client.EC2(ctx, providerName)
+	if err != nil {
+		return nil, err
+	}
+
 	out, err := ec2Client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
 		Filters: []ec2types.Filter{{
 			Name:   aws.String("group-name"),

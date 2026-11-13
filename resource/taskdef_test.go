@@ -33,7 +33,7 @@ func TestTaskDefNormalizeKeepsBuilditTagsOutOfLabels(t *testing.T) {
 		Containers: []*Container{{Name: "example-container"}},
 	}
 
-	td.Normalize(context.Background())
+	require.NoError(t, td.Normalize(context.Background()))
 
 	require.Len(t, td.Containers, 1)
 	labels := td.Containers[0].Labels
@@ -65,7 +65,7 @@ func TestTaskDefNormalizeKeepsExplicitLabels(t *testing.T) {
 		Containers: []*Container{{Name: "example-container", Labels: map[string]string{"own": "label"}}},
 	}
 
-	td.Normalize(context.Background())
+	require.NoError(t, td.Normalize(context.Background()))
 
 	assert.Equal(t, map[string]string{"own": "label"}, td.Containers[0].Labels)
 }

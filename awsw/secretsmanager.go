@@ -16,8 +16,12 @@ type SecretsManager struct {
 	*secretsmanager.Client
 }
 
-func NewSecretsManager(ctx context.Context, providerName string) SecretsManager {
-	return SecretsManager{client.SecretsManager(ctx, providerName)}
+func NewSecretsManager(ctx context.Context, providerName string) (SecretsManager, error) {
+	c, err := client.SecretsManager(ctx, providerName)
+	if err != nil {
+		return SecretsManager{}, err
+	}
+	return SecretsManager{c}, nil
 }
 
 // SecretArnForIdentifier resolves a SecretsManager Secret ARN from an identifier (ARN or Name).
@@ -29,10 +33,12 @@ func (s SecretsManager) SecretArnForIdentifier(ctx context.Context, identifier s
 
 	smService := s
 	if provider != "" {
-		if _, err := client.Provider(provider); err != nil {
-			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
+		var err error
+		smService, err = NewSecretsManager(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		smService = NewSecretsManager(ctx, provider)
+
 	}
 
 	// Direct lookup by Name/ID

@@ -13,8 +13,12 @@ type STS struct {
 }
 
 // NewSTS creates a new instance of STS wrapper
-func NewSTS(ctx context.Context, providerName string) STS {
-	return STS{client.STS(ctx, providerName)}
+func NewSTS(ctx context.Context, providerName string) (STS, error) {
+	c, err := client.STS(ctx, providerName)
+	if err != nil {
+		return STS{}, err
+	}
+	return STS{c}, nil
 }
 
 // GetCallerIdentity returns the caller identity for the current provider

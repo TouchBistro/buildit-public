@@ -20,8 +20,12 @@ type SFN struct {
 }
 
 // NewSFN creates a new instance of SFN wrapper
-func NewSFN(ctx context.Context, providerName string) SFN {
-	return SFN{client.SFN(ctx, providerName)}
+func NewSFN(ctx context.Context, providerName string) (SFN, error) {
+	c, err := client.SFN(ctx, providerName)
+	if err != nil {
+		return SFN{}, err
+	}
+	return SFN{c}, nil
 }
 
 // StateMachineArnForIdentifier resolves an SFN State Machine ARN from an identifier (ARN or Name).
@@ -33,10 +37,12 @@ func (s SFN) StateMachineArnForIdentifier(ctx context.Context, identifier string
 
 	sfnService := s
 	if provider != "" {
-		if _, err := client.Provider(provider); err != nil {
-			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
+		var err error
+		sfnService, err = NewSFN(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		sfnService = NewSFN(ctx, provider)
+
 	}
 
 	// 1. Try Describe (works if resource is ARN)

@@ -17,8 +17,12 @@ type Firehose struct {
 }
 
 // NewFirehose creates a new instance of the Firehose wrapper.
-func NewFirehose(ctx context.Context, providerName string) Firehose {
-	return Firehose{client.Firehose(ctx, providerName)}
+func NewFirehose(ctx context.Context, providerName string) (Firehose, error) {
+	c, err := client.Firehose(ctx, providerName)
+	if err != nil {
+		return Firehose{}, err
+	}
+	return Firehose{c}, nil
 }
 
 // DeliveryStreamArnForIdentifier resolves a Firehose delivery stream ARN from an identifier (ARN or Name).
@@ -33,10 +37,12 @@ func (f Firehose) DeliveryStreamArnForIdentifier(ctx context.Context, identifier
 
 	firehoseService := f
 	if provider != "" {
-		if _, err := client.Provider(provider); err != nil {
-			return nil, errors.Wrapf(err, "provider %q not found", provider)
+		var err error
+		firehoseService, err = NewFirehose(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		firehoseService = NewFirehose(ctx, provider)
+
 	}
 
 	out, err := firehoseService.DescribeDeliveryStream(ctx, &firehose.DescribeDeliveryStreamInput{

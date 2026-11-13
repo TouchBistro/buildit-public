@@ -20,14 +20,14 @@ import (
 
 // EventBridgeApiDestination represents eventbridge API Destination
 type EventBridgeApiDestination struct {
-	BaseResource `yaml:",inline"`
-	Arn            string  `yaml:"-"` // loaded when read from aws
-	Name           string  `yaml:"name"`
-	Description    *string `yaml:"description"`
-	Method         *string `yaml:"method"`
-	Endpoint       *string `yaml:"endpoint"`
-	InvocationRate *int32  `yaml:"invocationRateLimitPerSecond"`
-	ConnectionName string  `yaml:"connectionName"`
+	BaseResource   `yaml:",inline"`
+	Arn            string            `yaml:"-"` // loaded when read from aws
+	Name           string            `yaml:"name"`
+	Description    *string           `yaml:"description"`
+	Method         *string           `yaml:"method"`
+	Endpoint       *string           `yaml:"endpoint"`
+	InvocationRate *int32            `yaml:"invocationRateLimitPerSecond"`
+	ConnectionName string            `yaml:"connectionName"`
 	Tags           map[string]string `yaml:"tags"` // rejected by Validate: api destinations cannot be tagged
 	DependsOn      []Key             `yaml:"dependsOn"`
 }
@@ -43,7 +43,7 @@ func (d EventBridgeApiDestination) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields.
-func (d *EventBridgeApiDestination) Normalize(ctx context.Context) {
+func (d *EventBridgeApiDestination) Normalize(ctx context.Context) error {
 
 	if d.Method == nil {
 		d.Method = aws.String(string(eventbridgetypes.ApiDestinationHttpMethodGet))
@@ -54,6 +54,7 @@ func (d *EventBridgeApiDestination) Normalize(ctx context.Context) {
 	if d.InvocationRate == nil {
 		d.InvocationRate = aws.Int32(0)
 	}
+	return nil
 }
 
 // Validate checks that the input provided is correct
@@ -160,7 +161,10 @@ func (d EventBridgeApiDestination) Destroy(ctx context.Context) error {
 		return nil
 	}
 
-	ebClient := client.EventBridge(ctx, d.Context.ProviderName)
+	ebClient, err := client.EventBridge(ctx, d.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	_, err = ebClient.DeleteApiDestination(ctx, &eventbridge.DeleteApiDestinationInput{
 		Name: aws.String(d.Name),
@@ -249,12 +253,20 @@ func (d EventBridgeApiDestination) apply(ctx context.Context) error {
 
 	log.Debugf("creating api destination %v", d.Name)
 
-	connectionArn, err := awsw.NewEventBridge(ctx, d.Context.ProviderName).ConnectionArnForName(ctx, d.ConnectionName)
+	eventBridgeSvc, err := awsw.NewEventBridge(ctx, d.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+	connectionArn, err := eventBridgeSvc.ConnectionArnForName(ctx, d.ConnectionName)
 	if err != nil {
 		return err
 	}
 
-	ebClient := client.EventBridge(ctx, d.Context.ProviderName)
+	ebClient, err := client.EventBridge(ctx, d.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	out, err := ebClient.CreateApiDestination(ctx, &eventbridge.CreateApiDestinationInput{
 		Name:                         aws.String(d.Name),
 		Description:                  d.Description,
@@ -300,7 +312,10 @@ func (d EventBridgeApiDestination) applyDiffs(ctx context.Context, diffs Resourc
 	}
 
 	var err error
-	client := client.EventBridge(ctx, d.Context.ProviderName)
+	client, err := client.EventBridge(ctx, d.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	updateInput := &eventbridge.UpdateApiDestinationInput{
 		Name: aws.String(d.Name),
@@ -323,7 +338,11 @@ func (d EventBridgeApiDestination) applyDiffs(ctx context.Context, diffs Resourc
 	}
 
 	if adDiffs.connectionDiff {
-		arn, err := awsw.NewEventBridge(ctx, d.Context.ProviderName).ConnectionArnForName(ctx, d.ConnectionName)
+		eventBridgeSvc, err := awsw.NewEventBridge(ctx, d.Context.ProviderName)
+		if err != nil {
+			return err
+		}
+		arn, err := eventBridgeSvc.ConnectionArnForName(ctx, d.ConnectionName)
 		if err != nil {
 			return err
 		}
@@ -342,7 +361,11 @@ func (d EventBridgeApiDestination) applyDiffs(ctx context.Context, diffs Resourc
 // fetchExisting fetches the existing Api Destination or error
 func (d EventBridgeApiDestination) fetchExisting(ctx context.Context) (*EventBridgeApiDestination, error) {
 
-	ebClient := client.EventBridge(ctx, d.Context.ProviderName)
+	ebClient, err := client.EventBridge(ctx, d.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	outl, err := ebClient.ListApiDestinations(ctx, &eventbridge.ListApiDestinationsInput{
 		NamePrefix: aws.String(d.Name),
 	})
@@ -363,7 +386,11 @@ func (d EventBridgeApiDestination) fetchExisting(ctx context.Context) (*EventBri
 		return nil, errors.Wrapf(err, "error fetching api destination %v", d.Name)
 	}
 
-	connectionName, err := awsw.NewEventBridge(ctx, d.Context.ProviderName).ConnectionNameForArn(ctx, *out.ConnectionArn)
+	eventBridgeSvc, err := awsw.NewEventBridge(ctx, d.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	connectionName, err := eventBridgeSvc.ConnectionNameForArn(ctx, *out.ConnectionArn)
 	if err != nil {
 		return nil, err
 	}

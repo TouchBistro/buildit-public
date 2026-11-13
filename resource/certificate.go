@@ -56,7 +56,7 @@ func (c ACMCertificate) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields.
-func (c *ACMCertificate) Normalize(ctx context.Context) {
+func (c *ACMCertificate) Normalize(ctx context.Context) error {
 
 	// the certificate CN defaults to the resource name
 	if c.DomainName == "" {
@@ -75,6 +75,7 @@ func (c *ACMCertificate) Normalize(ctx context.Context) {
 	}
 
 	ResourceTags(c.Tags).Merge(c.GlobalTags)
+	return nil
 }
 
 // resolveValidationZones folds the two explicit placement fields into one lookup keyed by
@@ -205,7 +206,11 @@ func (c ACMCertificate) Destroy(ctx context.Context) error {
 	}
 
 	// now delete the certificate
-	_, err = client.ACM(ctx, c.Context.ProviderName).DeleteCertificate(ctx, &acm.DeleteCertificateInput{
+	acmClient, acmClientErr := client.ACM(ctx, c.Context.ProviderName)
+	if acmClientErr != nil {
+		return acmClientErr
+	}
+	_, err = acmClient.DeleteCertificate(ctx, &acm.DeleteCertificateInput{
 		CertificateArn: existing.CertificateArn,
 	})
 
@@ -257,7 +262,11 @@ func (c ACMCertificate) Compare(ctx context.Context) (ResourceDiff, error) {
 		return diffs, nil
 	}
 
-	awsTags, err := awsw.NewACM(ctx, c.Context.ProviderName).GetResourceTags(ctx, *existing.CertificateArn)
+	acmSvc, err := awsw.NewACM(ctx, c.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	awsTags, err := acmSvc.GetResourceTags(ctx, *existing.CertificateArn)
 	if err != nil {
 		return nil, err
 	}
@@ -320,7 +329,10 @@ func (c ACMCertificate) compareExisting(ctx context.Context, diffs *ACMCertifica
 
 // apply provisions are new acm certificate
 func (c ACMCertificate) apply(ctx context.Context) error {
-	acmClient := client.ACM(ctx, c.Context.ProviderName)
+	acmClient, err := client.ACM(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	//tags
 	var tags []acmtypes.Tag
@@ -400,14 +412,24 @@ func (c ACMCertificate) applyDiffs(ctx context.Context, diffs ResourceDiff) erro
 		upserts := certDiffs.tagDiff.Upserts()
 
 		if len(upserts) > 0 {
-			err = awsw.NewACM(ctx, c.Context.ProviderName).AddResourceTags(ctx, *existing.CertificateArn, upserts)
+			var acmSvc awsw.ACM
+			acmSvc, err = awsw.NewACM(ctx, c.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			err = acmSvc.AddResourceTags(ctx, *existing.CertificateArn, upserts)
 			if err != nil {
 				return errors.Wrapf(err, "error updating certificate tags for %v", c.Identifier())
 			}
 		}
 
 		if len(certDiffs.tagDiff.Deleted) > 0 {
-			err = awsw.NewACM(ctx, c.Context.ProviderName).DeleteResourceTags(ctx, *existing.CertificateArn, certDiffs.tagDiff.Deleted)
+			var acmSvc2 awsw.ACM
+			acmSvc2, err = awsw.NewACM(ctx, c.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			err = acmSvc2.DeleteResourceTags(ctx, *existing.CertificateArn, certDiffs.tagDiff.Deleted)
 			if err != nil {
 				return errors.Wrapf(err, "error deleting certificate tags for %v", c.Identifier())
 			}
@@ -429,7 +451,11 @@ func (c ACMCertificate) applyDiffs(ctx context.Context, diffs ResourceDiff) erro
 // certificate buildit manages rather than an arbitrary one.
 func (c ACMCertificate) fetchExisting(ctx context.Context) (*acmtypes.CertificateDetail, error) {
 
-	arn, err := awsw.NewACM(ctx, c.Context.ProviderName).FindCertificateForResource(ctx, c.DomainName, c.Identifier())
+	acmSvc, err := awsw.NewACM(ctx, c.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	arn, err := acmSvc.FindCertificateForResource(ctx, c.DomainName, c.Identifier())
 	if err != nil {
 		return nil, errors.Wrapf(err, "error resolving acm certificate %v", c.Identifier())
 	}
@@ -437,7 +463,11 @@ func (c ACMCertificate) fetchExisting(ctx context.Context) (*acmtypes.Certificat
 		return nil, nil
 	}
 
-	descResp, err := client.ACM(ctx, c.Context.ProviderName).DescribeCertificate(ctx, &acm.DescribeCertificateInput{
+	acmClient, err := client.ACM(ctx, c.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	descResp, err := acmClient.DescribeCertificate(ctx, &acm.DescribeCertificateInput{
 		CertificateArn: arn,
 	})
 	if err != nil {
@@ -484,7 +514,11 @@ func (c ACMCertificate) validateCertificate(ctx context.Context, certificateArn 
 // before this function exits with a failure is 600s or 10m
 func waitUntilDomainValidationDetailsAvailable(ctx context.Context, providerName string, certificateArn *string) ([]acmtypes.DomainValidation, error) {
 
-	acmClient := client.ACM(ctx, providerName)
+	acmClient, err := client.ACM(ctx, providerName)
+	if err != nil {
+		return nil, err
+	}
+
 	done := false
 	retries := retriesRemaining
 
@@ -531,7 +565,11 @@ func waitUntilDomainValidationDetailsAvailable(ctx context.Context, providerName
 // 40 checks, so the maximum wait time before this function exits with a failure is 600s or 10m
 func waitUntilCertificateValidated(ctx context.Context, providerName string, certificateArn *string) error {
 
-	acmClient := client.ACM(ctx, providerName)
+	acmClient, err := client.ACM(ctx, providerName)
+	if err != nil {
+		return err
+	}
+
 	done := false
 	retries := retriesRemaining
 
@@ -606,7 +644,9 @@ func (c ACMCertificate) manageDNSValidation(ctx context.Context, validations []a
 			Destinations: []string{destination},
 			hostedZoneId: target.zoneID, // set when discovered; Normalize looks it up by name otherwise
 		}
-		record.Normalize(ctx)
+		if err := record.Normalize(ctx); err != nil {
+			return err
+		}
 
 		if !clear {
 			err := record.apply(ctx)
@@ -650,7 +690,11 @@ func (c ACMCertificate) resolveValidationTarget(ctx context.Context, domain, rec
 		return validationTarget{provider: provider, zone: zone}, nil
 	}
 
-	hz, err := awsw.NewRoute53(ctx, c.Context.ProviderName).FindHostedZoneForRecord(ctx, recordFqdn)
+	route53Svc, err := awsw.NewRoute53(ctx, c.Context.ProviderName)
+	if err != nil {
+		return validationTarget{}, err
+	}
+	hz, err := route53Svc.FindHostedZoneForRecord(ctx, recordFqdn)
 	if err != nil {
 		return validationTarget{}, errors.Wrapf(err, "cannot place validation dns record for certificate %v", c.Identifier())
 	}
@@ -703,7 +747,11 @@ func (c ACMCertificate) checkValidationZones(ctx context.Context) error {
 		return nil
 	}
 
-	r53 := awsw.NewRoute53(ctx, c.Context.ProviderName)
+	r53, err := awsw.NewRoute53(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	for _, domain := range domains {
 		if _, err := r53.FindHostedZoneForRecord(ctx, domain); err != nil {
 			return errors.Wrapf(err, "cannot place validation dns record for certificate %v", c.Identifier())

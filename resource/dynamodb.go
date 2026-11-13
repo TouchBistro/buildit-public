@@ -22,7 +22,7 @@ import (
 
 // DynamoDB represents a dynamodb table
 type DynamoDB struct {
-	BaseResource `yaml:",inline"`
+	BaseResource              `yaml:",inline"`
 	Name                      string                          `yaml:"-"`
 	AttributeDefinitions      []AttributeDefinition           `yaml:"attributeDefinitions"`
 	KeySchema                 []KeySchema                     `yaml:"keySchema"`
@@ -93,7 +93,7 @@ func (d DynamoDB) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields.
-func (d *DynamoDB) Normalize(ctx context.Context) {
+func (d *DynamoDB) Normalize(ctx context.Context) error {
 	if d.Tags == nil {
 		d.Tags = make(map[string]string)
 	}
@@ -124,6 +124,7 @@ func (d *DynamoDB) Normalize(ctx context.Context) {
 	if d.ProvisionedThroughput != nil {
 		d._billingMode = types.BillingModeProvisioned
 	}
+	return nil
 }
 
 // Validate checks that the input provided is correct
@@ -297,8 +298,12 @@ func (d DynamoDB) apply(ctx context.Context) error {
 		})
 	}
 
-	dynamoClient := client.DynamoDB(ctx, d.Context.ProviderName)
-	_, err := dynamoClient.CreateTable(ctx, &dynamodb.CreateTableInput{
+	dynamoClient, err := client.DynamoDB(ctx, d.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
+	_, err = dynamoClient.CreateTable(ctx, &dynamodb.CreateTableInput{
 		TableName:                 aws.String(d.Name),
 		AttributeDefinitions:      attrDefs,
 		KeySchema:                 keySchema,
@@ -401,7 +406,10 @@ func (d DynamoDB) applyDiffs(ctx context.Context, diffs ResourceDiff) error {
 		})
 	}
 
-	dynamoClient := awsw.NewDynamoDB(ctx, d.Context.ProviderName)
+	dynamoClient, err := awsw.NewDynamoDB(ctx, d.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	// only 1 of these 3 operations are allowed at a time:
 	// Modify the provisioned throughput settings of the table.
@@ -771,7 +779,10 @@ func (d DynamoDB) Destroy(ctx context.Context) error {
 		return nil
 	}
 
-	dynamoClient := client.DynamoDB(ctx, d.Context.ProviderName)
+	dynamoClient, err := client.DynamoDB(ctx, d.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	// delete all replicas first
 	var toDelete []types.ReplicationGroupUpdate
@@ -812,7 +823,11 @@ func (d DynamoDB) Destroy(ctx context.Context) error {
 
 // fetchExisting returns the existing dynamodb table details if found
 func (d DynamoDB) fetchExisting(ctx context.Context) (*DynamoDB, error) {
-	dynamoClient := client.DynamoDB(ctx, d.Context.ProviderName)
+	dynamoClient, err := client.DynamoDB(ctx, d.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	out, err := dynamoClient.DescribeTable(ctx, &dynamodb.DescribeTableInput{
 		TableName: aws.String(d.Name),
 	})
@@ -967,7 +982,10 @@ func (d DynamoDB) waitForUpdate(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(d.UpdateTimeout)*time.Second)
 	defer cancel()
 
-	dynamodbClient := client.DynamoDB(ctx, d.Context.ProviderName)
+	dynamodbClient, err := client.DynamoDB(ctx, d.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	for {
 		// Wait for either the context to be done or the sleep duration.
@@ -1002,7 +1020,10 @@ func (d DynamoDB) waitForIndex(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(d.UpdateTimeout)*time.Second)
 	defer cancel()
 
-	dynamodbClient := client.DynamoDB(ctx, d.Context.ProviderName)
+	dynamodbClient, err := client.DynamoDB(ctx, d.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	// GSI take up to 2 minutes to show up in the DescribeTable call after the UpdateTable call returns
 	if err := util.SleepWithContext(ctx, 120*time.Second); err != nil {
@@ -1050,7 +1071,11 @@ func (d DynamoDB) waitForReplicaDelete(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(d.UpdateTimeout)*time.Second)
 	defer cancel()
 
-	dynamodbClient := client.DynamoDB(ctx, d.Context.ProviderName)
+	dynamodbClient, err := client.DynamoDB(ctx, d.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	for {
 		// Wait for either the context to be done or the sleep duration.
 		// This adds a wait period in between checks so we can give AWS a chance to finish the deployment before checking again.

@@ -17,7 +17,7 @@ import (
 
 // CWSubscriptionFilter represents a cloudWatch subscription filter rule; only Lambda subcribers are supported
 type CWSubscriptionFilter struct {
-	BaseResource `yaml:",inline"`
+	BaseResource   `yaml:",inline"`
 	Name           string  `yaml:"-"`
 	FilterName     *string `yaml:"filterName"`
 	Destination    string  `yaml:"destination"` //Only support Lambda for now
@@ -39,16 +39,17 @@ func (c CWSubscriptionFilter) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields.
-func (c *CWSubscriptionFilter) Normalize(ctx context.Context) {
+func (c *CWSubscriptionFilter) Normalize(ctx context.Context) error {
 	if c.FilterName == nil {
 		c.FilterName = aws.String(c.Identifier())
 	}
 
 	err := c.setEndpointArn(ctx)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
+	return nil
 }
 
 // Validate checks that the input provided is correct
@@ -110,8 +111,12 @@ func (c CWSubscriptionFilter) Apply(ctx context.Context) error {
 
 // apply provisions a new cloudWatch subscription filter
 func (c CWSubscriptionFilter) apply(ctx context.Context) error {
-	cwlClient := client.CloudWatchLogs(ctx, c.Context.ProviderName)
-	_, err := cwlClient.PutSubscriptionFilter(ctx, &cloudwatchlogs.PutSubscriptionFilterInput{
+	cwlClient, err := client.CloudWatchLogs(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
+	_, err = cwlClient.PutSubscriptionFilter(ctx, &cloudwatchlogs.PutSubscriptionFilterInput{
 		DestinationArn: aws.String(*c.DestinationArn),
 		FilterName:     c.FilterName,
 		FilterPattern:  aws.String(c.FilterPattern),
@@ -131,8 +136,12 @@ func (c CWSubscriptionFilter) apply(ctx context.Context) error {
 
 // applyDiffs update an existing cloudWatch subscription filter
 func (c CWSubscriptionFilter) applyDiffs(ctx context.Context) error {
-	cwlClient := client.CloudWatchLogs(ctx, c.Context.ProviderName)
-	_, err := cwlClient.PutSubscriptionFilter(ctx, &cloudwatchlogs.PutSubscriptionFilterInput{
+	cwlClient, err := client.CloudWatchLogs(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
+	_, err = cwlClient.PutSubscriptionFilter(ctx, &cloudwatchlogs.PutSubscriptionFilterInput{
 		DestinationArn: aws.String(*c.DestinationArn),
 		FilterName:     c.FilterName,
 		FilterPattern:  aws.String(c.FilterPattern),
@@ -210,7 +219,10 @@ func (c CWSubscriptionFilter) Destroy(ctx context.Context) error {
 		return nil
 	}
 
-	cwlClient := client.CloudWatchLogs(ctx, c.Context.ProviderName)
+	cwlClient, err := client.CloudWatchLogs(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	_, err = cwlClient.DeleteSubscriptionFilter(ctx, &cloudwatchlogs.DeleteSubscriptionFilterInput{
 		FilterName:   c.FilterName,
@@ -231,7 +243,11 @@ func (c CWSubscriptionFilter) Destroy(ctx context.Context) error {
 // return the ARN of the provided endpoint
 func (c *CWSubscriptionFilter) setEndpointArn(ctx context.Context) error {
 	name, qualifier := SplitNameQualifier(c.Destination)
-	arn, err := awsw.NewLambda(ctx, c.Context.ProviderName).LambdaArnForNameAndQualifier(ctx, name, qualifier)
+	lambdaSvc, err := awsw.NewLambda(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+	arn, err := lambdaSvc.LambdaArnForNameAndQualifier(ctx, name, qualifier)
 	if err != nil {
 		return errors.Wrapf(err, "error finding endpoint: %v", c.Destination)
 	}
@@ -244,7 +260,10 @@ func (c *CWSubscriptionFilter) setEndpointArn(ctx context.Context) error {
 
 // fetchExisting returns the existing subscription rule details if found, and set TopicArn and EndpointArn
 func (c CWSubscriptionFilter) fetchExisting(ctx context.Context) (*cwlTypes.SubscriptionFilter, error) {
-	cwlClient := awsw.NewCloudWatchLogs(ctx, c.Context.ProviderName)
+	cwlClient, err := awsw.NewCloudWatchLogs(ctx, c.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
 
 	// can return at most 2 filters
 	out, err := cwlClient.DescribeSubscriptionFilters(ctx, &cloudwatchlogs.DescribeSubscriptionFiltersInput{

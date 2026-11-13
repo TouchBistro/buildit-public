@@ -19,8 +19,12 @@ type DynamoDB struct {
 }
 
 // NewDynamoDB creates a new instance of DynamoDB wrapper
-func NewDynamoDB(ctx context.Context, providerName string) DynamoDB {
-	return DynamoDB{client.DynamoDB(ctx, providerName)}
+func NewDynamoDB(ctx context.Context, providerName string) (DynamoDB, error) {
+	c, err := client.DynamoDB(ctx, providerName)
+	if err != nil {
+		return DynamoDB{}, err
+	}
+	return DynamoDB{c}, nil
 }
 
 // TableArnForIdentifier resolves a DynamoDB Table ARN from an identifier (ARN or Table Name).
@@ -32,10 +36,12 @@ func (d DynamoDB) TableArnForIdentifier(ctx context.Context, identifier string) 
 
 	dynamoService := d
 	if provider != "" {
-		if _, err := client.Provider(provider); err != nil {
-			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
+		var err error
+		dynamoService, err = NewDynamoDB(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		dynamoService = NewDynamoDB(ctx, provider)
+
 	}
 
 	// 1. Try Lookup by Table Name

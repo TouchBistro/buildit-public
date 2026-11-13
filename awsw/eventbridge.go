@@ -18,8 +18,12 @@ type EventBridge struct {
 	*eventbridge.Client
 }
 
-func NewEventBridge(ctx context.Context, providerName string) EventBridge {
-	return EventBridge{client.EventBridge(ctx, providerName)}
+func NewEventBridge(ctx context.Context, providerName string) (EventBridge, error) {
+	c, err := client.EventBridge(ctx, providerName)
+	if err != nil {
+		return EventBridge{}, err
+	}
+	return EventBridge{c}, nil
 }
 
 // RuleArnForIdentifier resolves an EventBridge Rule ARN from an identifier (ARN or Name).
@@ -31,10 +35,12 @@ func (e EventBridge) RuleArnForIdentifier(ctx context.Context, identifier string
 
 	ebService := e
 	if provider != "" {
-		if _, err := client.Provider(provider); err != nil {
-			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
+		var err error
+		ebService, err = NewEventBridge(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		ebService = NewEventBridge(ctx, provider)
+
 	}
 
 	// Direct lookup by Name
@@ -57,10 +63,12 @@ func (e EventBridge) BusArnForIdentifier(ctx context.Context, identifier string)
 
 	ebService := e
 	if provider != "" {
-		if _, err := client.Provider(provider); err != nil {
-			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
+		var err error
+		ebService, err = NewEventBridge(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		ebService = NewEventBridge(ctx, provider)
+
 	}
 
 	// Direct lookup by Name

@@ -14,7 +14,9 @@ func TestFirehoseIcebergDestination_Normalize(t *testing.T) {
 
 	t.Run("sets defaults", func(t *testing.T) {
 		d := &FirehoseIcebergDestination{}
-		d.normalize(ctx, providerName)
+		if err := d.normalize(ctx, providerName); err != nil {
+			t.Fatal(err)
+		}
 
 		assert.NotNil(t, d.BufferingIntervalSeconds)
 		assert.Equal(t, int32(300), *d.BufferingIntervalSeconds)

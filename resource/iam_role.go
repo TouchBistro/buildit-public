@@ -25,7 +25,7 @@ const (
 
 // IAMRole represents an IAMRole
 type IAMRole struct {
-	BaseResource `yaml:",inline"`
+	BaseResource       `yaml:",inline"`
 	Name               string            `yaml:"-"`
 	Description        string            `yaml:"description"`
 	MaxSessionDuration int32             `yaml:"maxSessionDuration"`
@@ -51,7 +51,7 @@ func (r IAMRole) Identifier() string {
 // we combine it into Validate?
 
 // Normalize will perform any necessary validations to the IAM role and set any default values.
-func (r *IAMRole) Normalize(ctx context.Context) {
+func (r *IAMRole) Normalize(ctx context.Context) error {
 	r.TrustPolicy.fixMapKeys()
 
 	//if maxSessionDuration is not provided, ignore & set to default 1 hour
@@ -66,6 +66,7 @@ func (r *IAMRole) Normalize(ctx context.Context) {
 	}
 
 	ResourceTags(r.Tags).Merge(r.GlobalTags)
+	return nil
 }
 
 // Validate checks that the IAM role has a valid configuration.
@@ -153,10 +154,17 @@ func (r IAMRole) Destroy(ctx context.Context) error {
 
 	log.WithField("Name", r.Identifier()).Debug("Destroying iam role")
 
-	iamClient := client.IAM(ctx, r.Context.ProviderName)
+	iamClient, err := client.IAM(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	// We need to detach all policies from the role before we can delete it
-	attachedPolicies, err := awsw.NewIAM(ctx, r.Context.ProviderName).ListAttachedPoliciesByRole(ctx, *existing.RoleName)
+	iamSvc, err := awsw.NewIAM(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+	attachedPolicies, err := iamSvc.ListAttachedPoliciesByRole(ctx, *existing.RoleName)
 	if err != nil {
 		return errors.Wrapf(err, "failed to get policies attached to role %s", r.Identifier())
 	}
@@ -254,7 +262,11 @@ func (r IAMRole) Compare(ctx context.Context) (ResourceDiff, error) {
 	}
 
 	// policies attached
-	attachedPolicies, err := awsw.NewIAM(ctx, r.Context.ProviderName).ListAttachedPoliciesByRole(ctx, *existing.RoleName)
+	iamSvc, err := awsw.NewIAM(ctx, r.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	attachedPolicies, err := iamSvc.ListAttachedPoliciesByRole(ctx, *existing.RoleName)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get policies attached to role %s", r.Identifier())
 	}
@@ -315,7 +327,11 @@ func (r IAMRole) Compare(ctx context.Context) (ResourceDiff, error) {
 // If an error occurs a non-nil error is returned. If the role
 // is not found both the role and error will be nil.
 func (r IAMRole) fetchExisting(ctx context.Context) (*iamtypes.Role, error) {
-	iamClient := client.IAM(ctx, r.Context.ProviderName)
+	iamClient, err := client.IAM(ctx, r.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	respGetRole, err := iamClient.GetRole(ctx, &iam.GetRoleInput{
 		RoleName: &r.Name,
 	})
@@ -333,7 +349,10 @@ func (r IAMRole) fetchExisting(ctx context.Context) (*iamtypes.Role, error) {
 // Apply provisions the IAM role
 func (r IAMRole) apply(ctx context.Context) error {
 
-	iamClient := client.IAM(ctx, r.Context.ProviderName)
+	iamClient, err := client.IAM(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	//TODOL @esiddiqui make this map[string]string to []iam/types/Tag a helper func
 	var tags []iamtypes.Tag
@@ -439,7 +458,10 @@ func (r IAMRole) applyDiffs(ctx context.Context, diffs ResourceDiff) error {
 		updateInput.MaxSessionDuration = aws.Int32(r.MaxSessionDuration)
 	}
 
-	iamClient := client.IAM(ctx, r.Context.ProviderName)
+	iamClient, err := client.IAM(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	if roleDiffs.descDiff || roleDiffs.maxSessionDiff {
 		_, err = iamClient.UpdateRole(ctx, updateInput)
@@ -521,13 +543,23 @@ func (r IAMRole) applyDiffs(ctx context.Context, diffs ResourceDiff) error {
 	if roleDiffs.tagsDiff {
 		upserts := roleDiffs.tagDiff.Upserts()
 		if len(upserts) > 0 {
-			err = awsw.NewIAM(ctx, r.Context.ProviderName).AddRoleTags(ctx, *existing.RoleName, upserts)
+			var iamSvc awsw.IAM
+			iamSvc, err = awsw.NewIAM(ctx, r.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			err = iamSvc.AddRoleTags(ctx, *existing.RoleName, upserts)
 			if err != nil {
 				return errors.Wrapf(err, "error updating iam role tags for %v", r.Identifier())
 			}
 		}
 		if len(roleDiffs.tagDiff.Deleted) > 0 {
-			err = awsw.NewIAM(ctx, r.Context.ProviderName).DeleteRoleTags(ctx, *existing.RoleName, roleDiffs.tagDiff.Deleted)
+			var iamSvc2 awsw.IAM
+			iamSvc2, err = awsw.NewIAM(ctx, r.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			err = iamSvc2.DeleteRoleTags(ctx, *existing.RoleName, roleDiffs.tagDiff.Deleted)
 			if err != nil {
 				return errors.Wrapf(err, "error deleting iam role tags for %v", r.Identifier())
 			}

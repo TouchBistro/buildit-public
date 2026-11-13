@@ -17,8 +17,12 @@ type SNS struct {
 }
 
 // NewSNS creates a new instance of SNS wrapper
-func NewSNS(ctx context.Context, providerName string) SNS {
-	return SNS{client.SNS(ctx, providerName)}
+func NewSNS(ctx context.Context, providerName string) (SNS, error) {
+	c, err := client.SNS(ctx, providerName)
+	if err != nil {
+		return SNS{}, err
+	}
+	return SNS{c}, nil
 }
 
 // TopicArnForIdentifier resolves a topic ARN from an identifier (ARN or name).
@@ -31,11 +35,12 @@ func (s SNS) TopicArnForIdentifier(ctx context.Context, identifier string) (*str
 
 	snsService := s
 	if provider != "" {
-		// Verify provider exists to avoid fatal error in client.SNS
-		if _, err := client.Provider(provider); err != nil {
-			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
+		var err error
+		snsService, err = NewSNS(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		snsService = NewSNS(ctx, provider)
+
 	}
 
 	// Fetch Account ID using the active provider for this lookup.
@@ -43,7 +48,11 @@ func (s SNS) TopicArnForIdentifier(ctx context.Context, identifier string) (*str
 	if stsProvider == "" {
 		stsProvider = client.MainProvider
 	}
-	stsClient := NewSTS(ctx, stsProvider)
+	stsClient, err := NewSTS(ctx, stsProvider)
+	if err != nil {
+		return nil, err
+	}
+
 	accountID, err := stsClient.GetAccountID(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get account ID for provider %q: %w", stsProvider, err)

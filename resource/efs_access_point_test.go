@@ -14,7 +14,9 @@ func TestEFSAccessPoint_Normalize(t *testing.T) {
 
 	t.Run("merges global tags and does not synthesize a Name tag", func(t *testing.T) {
 		r := &EFSAccessPoint{Name: "app"}
-		r.Normalize(ctx, map[string]string{"owner": "team-a"})
+		if err := r.Normalize(ctx, map[string]string{"owner": "team-a"}); err != nil {
+			t.Fatal(err)
+		}
 		assert.Equal(t, "team-a", r.Tags["owner"])
 		// name is the ClientToken (identity), not a display tag — no Name tag is auto-set.
 		_, hasName := r.Tags["Name"]
@@ -23,7 +25,9 @@ func TestEFSAccessPoint_Normalize(t *testing.T) {
 
 	t.Run("keeps a user-supplied Name tag as an ordinary tag", func(t *testing.T) {
 		r := &EFSAccessPoint{Name: "app", Tags: map[string]string{"Name": "custom"}}
-		r.Normalize(ctx, nil)
+		if err := r.Normalize(ctx, nil); err != nil {
+			t.Fatal(err)
+		}
 		assert.Equal(t, "custom", r.Tags["Name"])
 	})
 }

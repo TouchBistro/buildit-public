@@ -51,7 +51,7 @@ func (c CloudfrontVpcOrigin) Identifier() string {
 
 // Normalize sets default values mirroring the cloudfront-distribution custom-origin
 // defaults (ports 80/443, https-only, TLSv1.2).
-func (c *CloudfrontVpcOrigin) Normalize(ctx context.Context) {
+func (c *CloudfrontVpcOrigin) Normalize(ctx context.Context) error {
 	if c.HTTPPort == nil {
 		c.HTTPPort = aws.Int32(80)
 	}
@@ -74,6 +74,7 @@ func (c *CloudfrontVpcOrigin) Normalize(ctx context.Context) {
 		c.Tags = make(map[string]string)
 	}
 	ResourceTags(c.Tags).Merge(c.GlobalTags)
+	return nil
 }
 
 // Validate checks the VPC origin configuration. It performs structural validation
@@ -138,7 +139,11 @@ func (c CloudfrontVpcOrigin) apply(ctx context.Context) error {
 		return err
 	}
 
-	cfClient := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	cfClient, err := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	out, err := cfClient.CreateVpcOrigin(ctx, cfg, c.Tags)
 	if err != nil {
 		return err
@@ -167,7 +172,10 @@ func (c CloudfrontVpcOrigin) applyDiffs(ctx context.Context, diffs ResourceDiff)
 		return errors.New("invalid diff type supplied")
 	}
 
-	cfClient := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	cfClient, err := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	if voDiff.configChanged {
 		if _, err := cfClient.UpdateVpcOriginConfig(ctx, voDiff.id, voDiff.etag, voDiff.desired); err != nil {
@@ -210,7 +218,11 @@ func (c CloudfrontVpcOrigin) applyDiffs(ctx context.Context, diffs ResourceDiff)
 func (c CloudfrontVpcOrigin) Destroy(ctx context.Context) error {
 	log.Debugf("destroying cloudfront vpc origin %v", c.Identifier())
 
-	cfClient := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	cfClient, err := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	existing, err := cfClient.FindVpcOriginByName(ctx, c.Identifier())
 	if err != nil {
 		return err
@@ -260,7 +272,11 @@ type CloudfrontVpcOriginDiff struct {
 
 // Compare fetches the existing VPC origin and diffs it against the desired config.
 func (c CloudfrontVpcOrigin) Compare(ctx context.Context) (ResourceDiff, error) {
-	cfClient := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	cfClient, err := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	existing, err := cfClient.FindVpcOriginByName(ctx, c.Identifier())
 	if err != nil {
 		return nil, err
@@ -314,7 +330,11 @@ func (c CloudfrontVpcOrigin) generateEndpointConfig(ctx context.Context) (*cftyp
 
 	endpointArn := target
 	if !strings.HasPrefix(endpointArn, "arn:") {
-		arn, err := awsw.NewELB(ctx, targetProvider).LoadBalancerArnForIdentifier(ctx, target)
+		elbSvc, err := awsw.NewELB(ctx, targetProvider)
+		if err != nil {
+			return nil, err
+		}
+		arn, err := elbSvc.LoadBalancerArnForIdentifier(ctx, target)
 		if err != nil {
 			return nil, errors.Wrapf(err, "error resolving load balancer %q for cloudfront vpc origin %v", c.Target, c.Identifier())
 		}

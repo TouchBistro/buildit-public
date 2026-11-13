@@ -19,8 +19,12 @@ type SQS struct {
 }
 
 // NewSQS creates a new instance of SQS wrapper
-func NewSQS(ctx context.Context, providerName string) SQS {
-	return SQS{client.SQS(ctx, providerName)}
+func NewSQS(ctx context.Context, providerName string) (SQS, error) {
+	c, err := client.SQS(ctx, providerName)
+	if err != nil {
+		return SQS{}, err
+	}
+	return SQS{c}, nil
 }
 
 // QueueArnForIdentifier resolves a queue ARN from an identifier (ARN or name).
@@ -33,11 +37,12 @@ func (s SQS) QueueArnForIdentifier(ctx context.Context, identifier string) (*str
 
 	sqsService := s
 	if provider != "" {
-		// Verify provider exists to avoid fatal error in client.SQS
-		if _, err := client.Provider(provider); err != nil {
-			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
+		var err error
+		sqsService, err = NewSQS(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		sqsService = NewSQS(ctx, provider)
+
 	}
 
 	return sqsService.QueueArnForName(ctx, resource)

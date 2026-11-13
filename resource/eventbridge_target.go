@@ -109,7 +109,7 @@ func (t EventBridgeTarget) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields.
-func (t *EventBridgeTarget) Normalize(ctx context.Context) {
+func (t *EventBridgeTarget) Normalize(ctx context.Context) error {
 
 	// target type
 	if t.TargetType == nil {
@@ -130,6 +130,7 @@ func (t *EventBridgeTarget) Normalize(ctx context.Context) {
 			}
 		}
 	}
+	return nil
 }
 
 // Validate checks that the input provided is correct
@@ -174,7 +175,11 @@ func (t EventBridgeTarget) Validate(ctx context.Context, rctx Context) error {
 		if t.APIDestination != nil {
 			numPathParms = len(t.APIDestination.PathParameters)
 		}
-		endpoint, _ := awsw.NewEventBridge(ctx, rctx.ProviderName).ApiDestinationEndpointForName(ctx, t.TargetResource)
+		eventBridgeSvc, err := awsw.NewEventBridge(ctx, rctx.ProviderName)
+		if err != nil {
+			return err
+		}
+		endpoint, _ := eventBridgeSvc.ApiDestinationEndpointForName(ctx, t.TargetResource)
 		if endpoint != nil {
 			wildcards := strings.Count(*endpoint, "*")
 			if wildcards != numPathParms {
@@ -239,17 +244,42 @@ func (t EventBridgeTarget) equals(ctx context.Context, rctx Context, existing *e
 
 	switch *t.TargetType {
 	case EventBridgeTarget_EcsRunTask:
-		arn, err = awsw.NewECS(ctx, rctx.ProviderName).EcsClusterArnForName(ctx, t.TargetResource)
+		var ecsSvc awsw.ECS
+		ecsSvc, err = awsw.NewECS(ctx, rctx.ProviderName)
+		if err != nil {
+			return false, nil, err
+		}
+		arn, err = ecsSvc.EcsClusterArnForName(ctx, t.TargetResource)
 	case EventBridgeTarget_ApiDestination:
-		arn, err = awsw.NewEventBridge(ctx, rctx.ProviderName).ApiDestinationArnForName(ctx, t.TargetResource)
+		var eventBridgeSvc awsw.EventBridge
+		eventBridgeSvc, err = awsw.NewEventBridge(ctx, rctx.ProviderName)
+		if err != nil {
+			return false, nil, err
+		}
+		arn, err = eventBridgeSvc.ApiDestinationArnForName(ctx, t.TargetResource)
 	case EventBridgeTarget_StepFunction:
 		name, qualifier := SplitNameQualifier(t.TargetResource)
-		arn, err = awsw.NewSFN(ctx, rctx.ProviderName).StateMachineArnForNameAndQualifer(ctx, name, qualifier)
+		var sfnSvc awsw.SFN
+		sfnSvc, err = awsw.NewSFN(ctx, rctx.ProviderName)
+		if err != nil {
+			return false, nil, err
+		}
+		arn, err = sfnSvc.StateMachineArnForNameAndQualifer(ctx, name, qualifier)
 	case EventBridgeTarget_Lambda:
 		name, qualifier := SplitNameQualifier(t.TargetResource)
-		arn, err = awsw.NewLambda(ctx, rctx.ProviderName).LambdaArnForNameAndQualifier(ctx, name, qualifier)
+		var lambdaSvc awsw.Lambda
+		lambdaSvc, err = awsw.NewLambda(ctx, rctx.ProviderName)
+		if err != nil {
+			return false, nil, err
+		}
+		arn, err = lambdaSvc.LambdaArnForNameAndQualifier(ctx, name, qualifier)
 	case EventBridgeTarget_Firehose:
-		arn, err = awsw.NewFirehose(ctx, rctx.ProviderName).DeliveryStreamArnForIdentifier(ctx, t.TargetResource)
+		var firehoseSvc awsw.Firehose
+		firehoseSvc, err = awsw.NewFirehose(ctx, rctx.ProviderName)
+		if err != nil {
+			return false, nil, err
+		}
+		arn, err = firehoseSvc.DeliveryStreamArnForIdentifier(ctx, t.TargetResource)
 	}
 
 	if err != nil {
@@ -276,7 +306,11 @@ func (t EventBridgeTarget) equals(ctx context.Context, rctx Context, existing *e
 	}
 
 	// role
-	roleArn, err := awsw.NewIAM(ctx, rctx.ProviderName).RoleArnForName(ctx, t.Role)
+	iamSvc, err := awsw.NewIAM(ctx, rctx.ProviderName)
+	if err != nil {
+		return false, nil, err
+	}
+	roleArn, err := iamSvc.RoleArnForName(ctx, t.Role)
 	if err != nil {
 		return false, nil, err
 	}
@@ -491,7 +525,11 @@ func (t EventBridgeTarget) equalsEcsParameters(ctx context.Context, rctx Context
 		}
 
 		//match subnets
-		subnetIDs, err := awsw.NewEC2(ctx, rctx.ProviderName).SubnetIdsByNames(ctx, ecsParms.Subnets)
+		ec2Svc, err := awsw.NewEC2(ctx, rctx.ProviderName)
+		if err != nil {
+			return false, nil, err
+		}
+		subnetIDs, err := ec2Svc.SubnetIdsByNames(ctx, ecsParms.Subnets)
 		if err != nil {
 			return false, nil, err
 		}
@@ -502,7 +540,11 @@ func (t EventBridgeTarget) equalsEcsParameters(ctx context.Context, rctx Context
 		}
 
 		//match security groups
-		securityGroupIDs, err := awsw.NewEC2(ctx, rctx.ProviderName).SecurityGroupIdsByNames(ctx, nil, ecsParms.SecurityGroups)
+		ec2Svc2, err := awsw.NewEC2(ctx, rctx.ProviderName)
+		if err != nil {
+			return false, nil, err
+		}
+		securityGroupIDs, err := ec2Svc2.SecurityGroupIdsByNames(ctx, nil, ecsParms.SecurityGroups)
 		if err != nil {
 			return false, nil, err
 		}
@@ -568,7 +610,11 @@ func (t EventBridgeTarget) equalsHttpParameters(existing *eventbridgetypes.Targe
 // fetchExisting returns the existing eventbridge target details if found
 func (t EventBridgeTarget) fetchExisting(ctx context.Context, rctx Context) (*eventbridgetypes.Target, error) {
 
-	ebrClient := client.EventBridge(ctx, rctx.ProviderName)
+	ebrClient, err := client.EventBridge(ctx, rctx.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	out, err := ebrClient.ListTargetsByRule(ctx, &eventbridge.ListTargetsByRuleInput{
 		EventBusName: aws.String(t.EventBusName),
 		Rule:         aws.String(t.RuleName),
@@ -591,7 +637,11 @@ func (t EventBridgeTarget) fetchExisting(ctx context.Context, rctx Context) (*ev
 func (t EventBridgeTarget) Apply(ctx context.Context, rctx Context) error {
 
 	//role
-	roleArn, err := awsw.NewIAM(ctx, rctx.ProviderName).RoleArnForName(ctx, t.Role)
+	iamSvc, err := awsw.NewIAM(ctx, rctx.ProviderName)
+	if err != nil {
+		return err
+	}
+	roleArn, err := iamSvc.RoleArnForName(ctx, t.Role)
 	if err != nil {
 		return errors.Wrapf(err, "error fetching role for name %v", t.Role)
 	}
@@ -650,7 +700,11 @@ func (t EventBridgeTarget) Apply(ctx context.Context, rctx Context) error {
 	case EventBridgeTarget_StepFunction:
 
 		name, qualifier := SplitNameQualifier(t.TargetResource)
-		targetArn, err := awsw.NewSFN(ctx, rctx.ProviderName).StateMachineArnForNameAndQualifer(ctx, name, qualifier)
+		sfnSvc, err := awsw.NewSFN(ctx, rctx.ProviderName)
+		if err != nil {
+			return err
+		}
+		targetArn, err := sfnSvc.StateMachineArnForNameAndQualifer(ctx, name, qualifier)
 		if err != nil {
 			return errors.Wrapf(err, "errors when resolving step function arn for eventbridge target %v", t.ID)
 		}
@@ -672,7 +726,11 @@ func (t EventBridgeTarget) Apply(ctx context.Context, rctx Context) error {
 	case EventBridgeTarget_Lambda:
 
 		name, qualifier := SplitNameQualifier(t.TargetResource)
-		targetArn, err := awsw.NewLambda(ctx, rctx.ProviderName).LambdaArnForNameAndQualifier(ctx, name, qualifier)
+		lambdaSvc, err := awsw.NewLambda(ctx, rctx.ProviderName)
+		if err != nil {
+			return err
+		}
+		targetArn, err := lambdaSvc.LambdaArnForNameAndQualifier(ctx, name, qualifier)
 		if err != nil {
 			return errors.Wrapf(err, "errors when resolving lambda arn for eventbridge target %v", t.ID)
 		}
@@ -693,7 +751,11 @@ func (t EventBridgeTarget) Apply(ctx context.Context, rctx Context) error {
 		}}
 	case EventBridgeTarget_Firehose:
 
-		targetArn, err := awsw.NewFirehose(ctx, rctx.ProviderName).DeliveryStreamArnForIdentifier(ctx, t.TargetResource)
+		firehoseSvc, err := awsw.NewFirehose(ctx, rctx.ProviderName)
+		if err != nil {
+			return err
+		}
+		targetArn, err := firehoseSvc.DeliveryStreamArnForIdentifier(ctx, t.TargetResource)
 		if err != nil {
 			return errors.Wrapf(err, "errors when resolving firehose delivery stream arn for eventbridge target %v", t.ID)
 		}
@@ -715,7 +777,11 @@ func (t EventBridgeTarget) Apply(ctx context.Context, rctx Context) error {
 	}
 
 	// put targets
-	ebrClient := client.EventBridge(ctx, rctx.ProviderName)
+	ebrClient, err := client.EventBridge(ctx, rctx.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	_, err = ebrClient.PutTargets(ctx, &eventbridge.PutTargetsInput{
 		EventBusName: aws.String(t.EventBusName),
 		Rule:         aws.String(t.RuleName),
@@ -737,9 +803,12 @@ func (t EventBridgeTarget) Apply(ctx context.Context, rctx Context) error {
 // Destroy removes the eventbridge target
 func (t EventBridgeTarget) Destroy(ctx context.Context, rctx Context) error {
 
-	ebrClient := client.EventBridge(ctx, rctx.ProviderName)
+	ebrClient, err := client.EventBridge(ctx, rctx.ProviderName)
+	if err != nil {
+		return err
+	}
 
-	_, err := ebrClient.RemoveTargets(ctx, &eventbridge.RemoveTargetsInput{
+	_, err = ebrClient.RemoveTargets(ctx, &eventbridge.RemoveTargetsInput{
 		EventBusName: aws.String(t.EventBusName),
 		Rule:         aws.String(t.RuleName),
 		Ids:          []string{t.ID},
@@ -763,7 +832,11 @@ func (t EventBridgeTarget) getEcsTaskParameters(ctx context.Context, rctx Contex
 	if *t.TargetType == EventBridgeTarget_EcsRunTask && t.ECSTask != nil {
 
 		//cluster arn
-		arn, err := awsw.NewECS(ctx, rctx.ProviderName).EcsClusterArnForName(ctx, t.TargetResource)
+		ecsSvc, err := awsw.NewECS(ctx, rctx.ProviderName)
+		if err != nil {
+			return nil, nil, err
+		}
+		arn, err := ecsSvc.EcsClusterArnForName(ctx, t.TargetResource)
 		if err != nil {
 			return nil, nil, errors.Wrapf(err, "error fetching cluster arn for name %v", t.TargetResource)
 		}
@@ -775,13 +848,21 @@ func (t EventBridgeTarget) getEcsTaskParameters(ctx context.Context, rctx Contex
 		}
 
 		//subnets
-		subnets, err := awsw.NewEC2(ctx, rctx.ProviderName).SubnetIdsByNames(ctx, t.ECSTask.Subnets)
+		ec2Svc, err := awsw.NewEC2(ctx, rctx.ProviderName)
+		if err != nil {
+			return nil, nil, err
+		}
+		subnets, err := ec2Svc.SubnetIdsByNames(ctx, t.ECSTask.Subnets)
 		if err != nil {
 			return nil, nil, errors.Wrapf(err, "error fetching subnets for target %v", t.TargetResource)
 		}
 
 		//security groups
-		securityGroups, err := awsw.NewEC2(ctx, rctx.ProviderName).SecurityGroupIdsByNames(ctx, nil, t.ECSTask.SecurityGroups)
+		ec2Svc2, err := awsw.NewEC2(ctx, rctx.ProviderName)
+		if err != nil {
+			return nil, nil, err
+		}
+		securityGroups, err := ec2Svc2.SecurityGroupIdsByNames(ctx, nil, t.ECSTask.SecurityGroups)
 		if err != nil {
 			return nil, nil, errors.Wrapf(err, "error fetching security groups for target %v", t.TargetResource)
 		}
@@ -880,7 +961,11 @@ func (t EventBridgeTarget) getApiDestinationParameters(ctx context.Context, rctx
 
 	if *t.TargetType == EventBridgeTarget_ApiDestination {
 		// arn for api destination
-		arn, err := awsw.NewEventBridge(ctx, rctx.ProviderName).ApiDestinationArnForName(ctx, t.TargetResource)
+		eventBridgeSvc, err := awsw.NewEventBridge(ctx, rctx.ProviderName)
+		if err != nil {
+			return nil, nil, err
+		}
+		arn, err := eventBridgeSvc.ApiDestinationArnForName(ctx, t.TargetResource)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -946,7 +1031,11 @@ func (t EventBridgeTarget) usesFargate(ctx context.Context, rctx Context) (bool,
 		}
 	} else {
 		//if no explicity CAP strategy is supplied, check default capacity provider strategy of the cluster...
-		ecsClient := client.ECS(ctx, rctx.ProviderName)
+		ecsClient, err := client.ECS(ctx, rctx.ProviderName)
+		if err != nil {
+			return false, err
+		}
+
 		out, err := ecsClient.DescribeClusters(ctx, &ecs.DescribeClustersInput{
 			Clusters: []string{t.TargetResource},
 		})

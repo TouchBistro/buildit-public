@@ -101,7 +101,7 @@ type ECSServiceCheckDeployment struct {
 // DeploymentType    DeploymentType always RollingUpdate
 // TaskPlacement     TaskPlacement always AZBalanced+Binpack
 type ECSService struct {
-	BaseResource `yaml:",inline"`
+	BaseResource             `yaml:",inline"`
 	Name                     string                        `yaml:"-"`
 	LaunchType               *string                       `yaml:"launchType"`
 	CapacityProviders        []ECSCapacityProviderStrategy `yaml:"capacityProviders"`
@@ -136,7 +136,7 @@ func (s ECSService) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields.
-func (s *ECSService) Normalize(ctx context.Context) {
+func (s *ECSService) Normalize(ctx context.Context) error {
 
 	// default service type to REPLICA
 	if s.ServiceType == nil {
@@ -216,7 +216,9 @@ func (s *ECSService) Normalize(ctx context.Context) {
 	s.ServiceAutoScaling.ResourceId = "service/" + s.ClusterName + "/" + s.Name
 	s.ServiceAutoScaling.ScalableDimension = string(aastypes.ScalableDimensionECSServiceDesiredCount)
 	s.ServiceAutoScaling.ServiceNamespace = string(aastypes.ServiceNamespaceEcs)
-	s.ServiceAutoScaling.Normalize(ctx)
+	if err := s.ServiceAutoScaling.Normalize(ctx); err != nil {
+		return err
+	}
 
 	// default container name and port
 	for i, target := range s.LoadBalancing.TargetGroupAssignments {
@@ -227,6 +229,7 @@ func (s *ECSService) Normalize(ctx context.Context) {
 			s.LoadBalancing.TargetGroupAssignments[i].ContainerPort = 8080
 		}
 	}
+	return nil
 }
 
 // Validate checks that the ECS Service has a valid configuration.
@@ -422,7 +425,11 @@ func (s ECSService) Destroy(ctx context.Context) error {
 		return nil
 	}
 
-	ecsClient := client.ECS(ctx, s.Context.ProviderName)
+	ecsClient, err := client.ECS(ctx, s.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	_, err = ecsClient.DeleteService(ctx, &ecs.DeleteServiceInput{
 		Cluster: aws.String(s.ClusterName),
 		Service: aws.String(s.Name),
@@ -460,7 +467,10 @@ func (s ECSService) Wait(ctx context.Context) error {
 	log.Debugf("Failed Task Threshold: %v", s.CheckDeployment.FailedTasksThreshold)
 
 	start := time.Now()
-	ecsClient := client.ECS(ctx, s.Context.ProviderName)
+	ecsClient, err := client.ECS(ctx, s.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	// Lookup the task def so we can get the ARN. We will need this to see if the service has cutover to new tasks
 	// with this ARN.
@@ -666,7 +676,10 @@ func (s ECSService) Wait(ctx context.Context) error {
 func (s ECSService) tasksForDeployment(ctx context.Context, deploymentId string, status ecstypes.DesiredStatus) ([]ecstypes.Task, error) {
 	var token *string
 	var tasks []ecstypes.Task
-	client := client.ECS(ctx, s.Context.ProviderName)
+	client, err := client.ECS(ctx, s.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
 
 	for {
 		out, err := client.ListTasks(ctx, &ecs.ListTasksInput{
@@ -923,7 +936,11 @@ func (s ECSService) Compare(ctx context.Context) (ResourceDiff, error) {
 		diffs.Messages = append(diffs.Messages, "service discovery config to be removed")
 	} else {
 		// fetch sd service arn
-		sds := awsw.NewServiceDiscovery(ctx, s.Context.ProviderName)
+		sds, err := awsw.NewServiceDiscovery(ctx, s.Context.ProviderName)
+		if err != nil {
+			return nil, err
+		}
+
 		sdArn, err := sds.ServiceArnForNamespaceAndService(ctx,
 			s.ServiceDiscovery.Namespace, s.ServiceDiscovery.Name)
 		if err != nil {
@@ -985,19 +1002,34 @@ func (s ECSService) Compare(ctx context.Context) (ResourceDiff, error) {
 
 		// fetch subnet/security group Ids
 		var err error
-		subnetIDs, err = awsw.NewEC2(ctx, s.Context.ProviderName).SubnetIdsByNames(ctx, s.Subnets)
+		var ec2Svc awsw.EC2
+		ec2Svc, err = awsw.NewEC2(ctx, s.Context.ProviderName)
+		if err != nil {
+			return nil, err
+		}
+		subnetIDs, err = ec2Svc.SubnetIdsByNames(ctx, s.Subnets)
 		if err != nil {
 			return nil, errors.Wrap(err, "error getting subnets IDs from names")
 		}
 
 		// find vpc id from the first subnet, to filter out vpcs
 		var vpcId *string
-		vpcId, err = awsw.NewEC2(ctx, s.Context.ProviderName).VpcIdBySubnetName(ctx, s.Subnets[0])
+		var ec2Svc2 awsw.EC2
+		ec2Svc2, err = awsw.NewEC2(ctx, s.Context.ProviderName)
+		if err != nil {
+			return nil, err
+		}
+		vpcId, err = ec2Svc2.VpcIdBySubnetName(ctx, s.Subnets[0])
 		if err != nil {
 			return nil, errors.Wrap(err, "error getting subnet vpc details")
 		}
 
-		securityGroupIDs, err = awsw.NewEC2(ctx, s.Context.ProviderName).SecurityGroupIdsByNames(ctx, vpcId, s.SecurityGroups)
+		var ec2Svc3 awsw.EC2
+		ec2Svc3, err = awsw.NewEC2(ctx, s.Context.ProviderName)
+		if err != nil {
+			return nil, err
+		}
+		securityGroupIDs, err = ec2Svc3.SecurityGroupIdsByNames(ctx, vpcId, s.SecurityGroups)
 		if err != nil {
 			return nil, errors.Wrap(err, "error getting security groups IDs from names")
 		}
@@ -1018,7 +1050,11 @@ func (s ECSService) Compare(ctx context.Context) (ResourceDiff, error) {
 	}
 
 	// tags
-	awsTags, err := awsw.NewECS(ctx, s.Context.ProviderName).GetResourceTags(ctx, *existing.ServiceArn)
+	ecsSvc, err := awsw.NewECS(ctx, s.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	awsTags, err := ecsSvc.GetResourceTags(ctx, *existing.ServiceArn)
 	if err != nil {
 		return nil, err
 	}
@@ -1067,7 +1103,10 @@ func (s ECSService) Compare(ctx context.Context) (ResourceDiff, error) {
 // fetchExisting attemps to sync state for this resource with AWS, or returns an error
 func (s ECSService) fetchExisting(ctx context.Context) (*ecstypes.Service, error) {
 
-	ecsClient := client.ECS(ctx, s.Context.ProviderName)
+	ecsClient, err := client.ECS(ctx, s.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
 
 	out, err := ecsClient.DescribeServices(ctx, &ecs.DescribeServicesInput{
 		Cluster:  aws.String(s.ClusterName),
@@ -1180,19 +1219,32 @@ func (s ECSService) apply(ctx context.Context) error {
 			return errors.New("networking configuration parameters not provided to configure ecs service with awsvpc mode, check assignPublicIP subnets and securityGroups")
 		}
 
-		subnetIDs, err := awsw.NewEC2(ctx, s.Context.ProviderName).SubnetIdsByNames(ctx, s.Subnets)
+		ec2Svc, err := awsw.NewEC2(ctx, s.Context.ProviderName)
+		if err != nil {
+			return err
+		}
+		subnetIDs, err := ec2Svc.SubnetIdsByNames(ctx, s.Subnets)
 		if err != nil {
 			return errors.Wrap(err, "error getting subnets IDs from names")
 		}
 
 		// find vpc id from the first subnet, to filter out vpcs
 		var vpcId *string
-		vpcId, err = awsw.NewEC2(ctx, s.Context.ProviderName).VpcIdBySubnetName(ctx, s.Subnets[0])
+		var ec2Svc2 awsw.EC2
+		ec2Svc2, err = awsw.NewEC2(ctx, s.Context.ProviderName)
+		if err != nil {
+			return err
+		}
+		vpcId, err = ec2Svc2.VpcIdBySubnetName(ctx, s.Subnets[0])
 		if err != nil {
 			return errors.Wrap(err, "error getting subnet vpc details")
 		}
 
-		securityGroupIDs, err := awsw.NewEC2(ctx, s.Context.ProviderName).SecurityGroupIdsByNames(ctx, vpcId, s.SecurityGroups)
+		ec2Svc3, err := awsw.NewEC2(ctx, s.Context.ProviderName)
+		if err != nil {
+			return err
+		}
+		securityGroupIDs, err := ec2Svc3.SecurityGroupIdsByNames(ctx, vpcId, s.SecurityGroups)
 		if err != nil {
 			return errors.Wrap(err, "error getting security groups IDs from names")
 		}
@@ -1246,7 +1298,11 @@ func (s ECSService) apply(ctx context.Context) error {
 	// Service Discovery
 	var serviceRegistries []ecstypes.ServiceRegistry
 	if s.ServiceDiscovery.Name != "" && s.ServiceDiscovery.Namespace != "" {
-		arn, err := awsw.NewServiceDiscovery(ctx, s.Context.ProviderName).ServiceArnForNamespaceAndService(ctx, s.ServiceDiscovery.Namespace, s.ServiceDiscovery.Name)
+		serviceDiscoverySvc, err := awsw.NewServiceDiscovery(ctx, s.Context.ProviderName)
+		if err != nil {
+			return err
+		}
+		arn, err := serviceDiscoverySvc.ServiceArnForNamespaceAndService(ctx, s.ServiceDiscovery.Namespace, s.ServiceDiscovery.Name)
 		if err != nil || arn == nil {
 			return errors.Wrap(err, "error creating service")
 		}
@@ -1291,7 +1347,10 @@ func (s ECSService) apply(ctx context.Context) error {
 		Tags:                          tags,
 	}
 
-	ecsClient := client.ECS(ctx, s.Context.ProviderName)
+	ecsClient, err := client.ECS(ctx, s.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	_, err = ecsClient.CreateService(ctx, &input)
 	if err != nil {
@@ -1461,7 +1520,11 @@ func (s ECSService) applyDiffs(ctx context.Context, diffs ResourceDiff) error {
 		input.LoadBalancers = lbs
 	}
 
-	ecsClient := client.ECS(ctx, s.Context.ProviderName)
+	ecsClient, err := client.ECS(ctx, s.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	if svcDiffs.diff || svcDiffs.foreceDeploymentDiff {
 		if !svcDiffs.diff {
 			log.WithField("Name", s.Name).Info(
@@ -1487,14 +1550,22 @@ func (s ECSService) applyDiffs(ctx context.Context, diffs ResourceDiff) error {
 	if svcDiffs.tagsDiff {
 		upserts := svcDiffs.tagDiff.Upserts()
 		if len(upserts) > 0 {
-			err := awsw.NewECS(ctx, s.Context.ProviderName).AddResourceTags(ctx, svcDiffs.serviceArn, upserts)
+			ecsSvc, err := awsw.NewECS(ctx, s.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			err = ecsSvc.AddResourceTags(ctx, svcDiffs.serviceArn, upserts)
 			if err != nil {
 				return errors.Wrapf(err, "error updating ecs service tags for %v", s.Identifier())
 			}
 		}
 
 		if len(svcDiffs.tagDiff.Deleted) > 0 {
-			err := awsw.NewECS(ctx, s.Context.ProviderName).DeleteResourceTags(ctx, svcDiffs.serviceArn, svcDiffs.tagDiff.Deleted)
+			ecsSvc2, err := awsw.NewECS(ctx, s.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			err = ecsSvc2.DeleteResourceTags(ctx, svcDiffs.serviceArn, svcDiffs.tagDiff.Deleted)
 			if err != nil {
 				return errors.Wrapf(err, "error updating ecs service tags for %v", s.Identifier())
 			}
@@ -1534,7 +1605,11 @@ func (s ECSService) usesFargate(ctx context.Context) (bool, error) {
 		}
 	} else {
 		//if no explicit CAP strategy is supplied, check default capacity provider strategy of the cluster...
-		ecsClient := client.ECS(ctx, s.Context.ProviderName)
+		ecsClient, err := client.ECS(ctx, s.Context.ProviderName)
+		if err != nil {
+			return false, err
+		}
+
 		out, err := ecsClient.DescribeClusters(ctx, &ecs.DescribeClustersInput{
 			Clusters: []string{s.ClusterName},
 		})
@@ -1563,7 +1638,11 @@ func (s ECSService) usesFargate(ctx context.Context) (bool, error) {
 // this function exits with a failure is 600s or 10m
 func waitUntilServiceInactive(ctx context.Context, providerName string, cluster string, service string) error {
 
-	ecsClient := client.ECS(ctx, providerName)
+	ecsClient, err := client.ECS(ctx, providerName)
+	if err != nil {
+		return err
+	}
+
 	done := false
 	retries := retriesRemaining
 
@@ -1609,7 +1688,10 @@ func targetGroupARNFromName(ctx context.Context, providerName string, targetGrou
 
 // helper to lookup tg by name
 func targetGroupFromName(ctx context.Context, providerName string, targetGroupName string) (*elbv2types.TargetGroup, error) {
-	elbClient := client.ELB(ctx, providerName)
+	elbClient, err := client.ELB(ctx, providerName)
+	if err != nil {
+		return nil, err
+	}
 
 	out, err := elbClient.DescribeTargetGroups(ctx, &elbv2.DescribeTargetGroupsInput{
 		Names: []string{targetGroupName},
@@ -1628,7 +1710,10 @@ func targetGroupFromName(ctx context.Context, providerName string, targetGroupNa
 // if revision is not specfied LATEST is assumed
 func taskDefByName(ctx context.Context, rctx Context, taskDefName string) (*ecstypes.TaskDefinition, error) {
 
-	ecsClient := client.ECS(ctx, rctx.ProviderName)
+	ecsClient, err := client.ECS(ctx, rctx.ProviderName)
+	if err != nil {
+		return nil, err
+	}
 
 	out, err := ecsClient.DescribeTaskDefinition(
 		ctx, &ecs.DescribeTaskDefinitionInput{
@@ -1703,7 +1788,10 @@ func diffCapacityProviderStrategies(left []ecstypes.CapacityProviderStrategyItem
 // equal to the provider strategy `left` - if the cluster cannot be described, this would return `false`
 func isDefaultCapacityProviderStrategy(ctx context.Context, rctx Context, clusterName string, left []ecstypes.CapacityProviderStrategyItem) bool {
 
-	ecsClient := client.ECS(ctx, rctx.ProviderName)
+	ecsClient, err := client.ECS(ctx, rctx.ProviderName)
+	if err != nil {
+		return false
+	}
 	out, err := ecsClient.DescribeClusters(ctx, &ecs.DescribeClustersInput{
 		Clusters: []string{clusterName},
 	})
@@ -1739,7 +1827,10 @@ func isDefaultCapacityProviderStrategy(ctx context.Context, rctx Context, cluste
 // similar to the provider strategy representaton `left` - if the cluster cannot be described, this would return `false`
 func isSameAsDefaultCAPStrategy(ctx context.Context, rctx Context, clusterName string, left []ECSCapacityProviderStrategy) bool {
 
-	ecsClient := client.ECS(ctx, rctx.ProviderName)
+	ecsClient, err := client.ECS(ctx, rctx.ProviderName)
+	if err != nil {
+		return false
+	}
 	out, err := ecsClient.DescribeClusters(ctx, &ecs.DescribeClustersInput{
 		Clusters: []string{clusterName},
 	})

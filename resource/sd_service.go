@@ -33,7 +33,7 @@ type SDDnsRecord struct {
 
 // SDService represents a virtual service in Cloud Map
 type SDService struct {
-	BaseResource `yaml:",inline"`
+	BaseResource  `yaml:",inline"`
 	Name          string            `yaml:"-"`
 	DiscoveryName string            `yaml:"discoveryName"`
 	Description   string            `yaml:"description"`
@@ -89,7 +89,7 @@ func (s SDService) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields.
-func (s *SDService) Normalize(ctx context.Context) {
+func (s *SDService) Normalize(ctx context.Context) error {
 	//Merge globalTags to Service Discovery tags, if key is not already present
 	//later we'll use s.Tags to add/update tags
 	if s.Tags == nil {
@@ -131,6 +131,7 @@ func (s *SDService) Normalize(ctx context.Context) {
 	s.RoutingPolicy = strings.ToUpper(s.RoutingPolicy)
 
 	ResourceTags(s.Tags).Merge(s.GlobalTags)
+	return nil
 }
 
 // Validate checks that the SDService has a valid configuration.
@@ -209,7 +210,11 @@ func (s SDService) Apply(ctx context.Context) error {
 // Destroy deletes the existing service registry
 func (s SDService) Destroy(ctx context.Context) error {
 
-	sdClient := client.ServiceDiscovery(ctx, s.Context.ProviderName)
+	sdClient, err := client.ServiceDiscovery(ctx, s.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	log.WithField("Name", s.Name).Debug("checking if service discovery service exists")
 	awsSvc, err := s.fetchExisting(ctx)
 	if err != nil {
@@ -366,7 +371,11 @@ func (s SDService) Compare(ctx context.Context) (ResourceDiff, error) {
 	if existing.Arn == nil {
 		return nil, errors.Errorf("existing service discovery service %v is missing arn", s.Identifier())
 	}
-	awsTags, err := awsw.NewServiceDiscovery(ctx, s.Context.ProviderName).GetResourceTags(ctx, *existing.Arn)
+	serviceDiscoverySvc, err := awsw.NewServiceDiscovery(ctx, s.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	awsTags, err := serviceDiscoverySvc.GetResourceTags(ctx, *existing.Arn)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error fetching tags for service discovery service %v", s.Identifier())
 	}
@@ -387,12 +396,19 @@ func (s SDService) Compare(ctx context.Context) (ResourceDiff, error) {
 // apply provisions a new service discovery service
 func (s SDService) apply(ctx context.Context) error {
 
-	namespaceId, err := awsw.NewServiceDiscovery(ctx, s.Context.ProviderName).NameSpaceIdFromName(ctx, s.Namespace)
+	serviceDiscoverySvc, err := awsw.NewServiceDiscovery(ctx, s.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+	namespaceId, err := serviceDiscoverySvc.NameSpaceIdFromName(ctx, s.Namespace)
 	if err != nil {
 		return errors.Wrap(err, "error looking up service discovery namespace")
 	}
 
-	sdClient := client.ServiceDiscovery(ctx, s.Context.ProviderName)
+	sdClient, err := client.ServiceDiscovery(ctx, s.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	var tags []sdtypes.Tag
 	for k, v := range s.Tags {
@@ -490,7 +506,11 @@ func (s SDService) applyDiffs(ctx context.Context, diffs ResourceDiff) error {
 			})
 		}
 
-		_, err := client.ServiceDiscovery(ctx, s.Context.ProviderName).UpdateService(ctx, &servicediscovery.UpdateServiceInput{
+		serviceDiscoveryClient, err := client.ServiceDiscovery(ctx, s.Context.ProviderName)
+		if err != nil {
+			return err
+		}
+		_, err = serviceDiscoveryClient.UpdateService(ctx, &servicediscovery.UpdateServiceInput{
 			Id: existing.Id,
 			Service: &sdtypes.ServiceChange{
 				Description: aws.String(s.Description),
@@ -513,13 +533,23 @@ func (s SDService) applyDiffs(ctx context.Context, diffs ResourceDiff) error {
 		}
 		upserts := svcDiffs.tagDiff.Upserts()
 		if len(upserts) > 0 {
-			err = awsw.NewServiceDiscovery(ctx, s.Context.ProviderName).AddResourceTags(ctx, *existing.Arn, upserts)
+			var serviceDiscoverySvc awsw.ServiceDiscovery
+			serviceDiscoverySvc, err = awsw.NewServiceDiscovery(ctx, s.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			err = serviceDiscoverySvc.AddResourceTags(ctx, *existing.Arn, upserts)
 			if err != nil {
 				return errors.Wrapf(err, "error updating service discovery service tags for %v", s.Identifier())
 			}
 		}
 		if len(svcDiffs.tagDiff.Deleted) > 0 {
-			err = awsw.NewServiceDiscovery(ctx, s.Context.ProviderName).DeleteResourceTags(ctx, *existing.Arn, svcDiffs.tagDiff.Deleted)
+			var serviceDiscoverySvc2 awsw.ServiceDiscovery
+			serviceDiscoverySvc2, err = awsw.NewServiceDiscovery(ctx, s.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			err = serviceDiscoverySvc2.DeleteResourceTags(ctx, *existing.Arn, svcDiffs.tagDiff.Deleted)
 			if err != nil {
 				return errors.Wrapf(err, "error deleting service discovery service tags for %v", s.Identifier())
 			}
@@ -551,14 +581,21 @@ func (s SDService) applyDiffs(ctx context.Context, diffs ResourceDiff) error {
 // fetchExisting fetches the existing object from AWS
 func (s SDService) fetchExisting(ctx context.Context) (*sdtypes.ServiceSummary, error) {
 
-	namespaceId, err := awsw.NewServiceDiscovery(ctx, s.Context.ProviderName).NameSpaceIdFromName(ctx, s.Namespace)
+	serviceDiscoverySvc, err := awsw.NewServiceDiscovery(ctx, s.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	namespaceId, err := serviceDiscoverySvc.NameSpaceIdFromName(ctx, s.Namespace)
 	if err != nil {
 		return nil, errors.Wrap(err, "error looking up service discovery namespace")
 	}
 
 	done := false
 	var token *string
-	sdClient := client.ServiceDiscovery(ctx, s.Context.ProviderName)
+	sdClient, err := client.ServiceDiscovery(ctx, s.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
 
 	for !done {
 		if err := ctx.Err(); err != nil {
@@ -622,7 +659,10 @@ func (s SDService) desiredStaticInstances() (map[string]sdStaticInstance, error)
 func (s SDService) fetchManagedInstances(ctx context.Context, serviceID string) (map[string]sdtypes.InstanceSummary, error) {
 	instances := make(map[string]sdtypes.InstanceSummary)
 	var nextToken *string
-	sdClient := client.ServiceDiscovery(ctx, s.Context.ProviderName)
+	sdClient, err := client.ServiceDiscovery(ctx, s.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -654,7 +694,11 @@ func (s SDService) fetchManagedInstances(ctx context.Context, serviceID string) 
 }
 
 func (s SDService) syncManagedInstances(ctx context.Context, serviceID string, current map[string]sdtypes.InstanceSummary, desired map[string]sdStaticInstance) error {
-	sdClient := client.ServiceDiscovery(ctx, s.Context.ProviderName)
+	sdClient, err := client.ServiceDiscovery(ctx, s.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	serviceName := s.Name
 	if serviceName == "" {
 		serviceName = serviceID
@@ -731,7 +775,11 @@ func (s SDService) syncManagedInstances(ctx context.Context, serviceID string, c
 }
 
 func (s SDService) waitForOperation(ctx context.Context, operationID string) error {
-	sdClient := client.ServiceDiscovery(ctx, s.Context.ProviderName)
+	sdClient, err := client.ServiceDiscovery(ctx, s.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	deadline := time.Now().Add(sdOperationWaitTimeout)
 
 	for {

@@ -15,8 +15,12 @@ type Kafka struct {
 }
 
 // NewKafka creates a new instance of Kafka (MSK Cluster) wrapper
-func NewKafka(ctx context.Context, providerName string) Kafka {
-	return Kafka{client.Kafka(ctx, providerName)}
+func NewKafka(ctx context.Context, providerName string) (Kafka, error) {
+	c, err := client.Kafka(ctx, providerName)
+	if err != nil {
+		return Kafka{}, err
+	}
+	return Kafka{c}, nil
 }
 
 // ClusterArnForIdentifier resolves an MSK Cluster ARN from an identifier (ARN or Name).
@@ -28,10 +32,12 @@ func (k Kafka) ClusterArnForIdentifier(ctx context.Context, identifier string) (
 
 	kafkaService := k
 	if provider != "" {
-		if _, err := client.Provider(provider); err != nil {
-			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
+		var err error
+		kafkaService, err = NewKafka(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		kafkaService = NewKafka(ctx, provider)
+
 	}
 
 	// MSK DescribeCluster requires a ClusterArn.

@@ -22,7 +22,7 @@ import (
 
 // MSKPlugin represents a kafka plugin
 type MSKPlugin struct {
-	BaseResource `yaml:",inline"`
+	BaseResource   `yaml:",inline"`
 	Name           string            `yaml:"-"`
 	Description    *string           `yaml:"description"`
 	Code           Code              `yaml:"code"`
@@ -53,7 +53,7 @@ func (p MSKPlugin) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields.
-func (p *MSKPlugin) Normalize(ctx context.Context) {
+func (p *MSKPlugin) Normalize(ctx context.Context) error {
 	if p.Tags == nil {
 		p.Tags = make(map[string]string)
 	}
@@ -65,15 +65,21 @@ func (p *MSKPlugin) Normalize(ctx context.Context) {
 
 	// sha256
 	var err error
-	p.Code._checksum, err = awsw.NewS3(ctx, p.Context.ProviderName).GetObjectChecksum(ctx, p.Code.Bucket, p.Code.FileKey, p.Code.ObjectVersion)
+	var s3Svc awsw.S3
+	s3Svc, err = awsw.NewS3(ctx, p.Context.ProviderName)
 	if err != nil {
-		panic(err)
+		return err
+	}
+	p.Code._checksum, err = s3Svc.GetObjectChecksum(ctx, p.Code.Bucket, p.Code.FileKey, p.Code.ObjectVersion)
+	if err != nil {
+		return err
 	}
 
 	// timeout
 	if p.TimeoutSeconds < 1 {
 		p.TimeoutSeconds = 60 // default to 1min
 	}
+	return nil
 }
 
 // Validate checks that the input provided is correct
@@ -149,8 +155,12 @@ func (p MSKPlugin) Apply(ctx context.Context) error {
 
 // apply provisions a new kafka plugin
 func (p MSKPlugin) apply(ctx context.Context) error {
-	mskClient := client.MSK(ctx, p.Context.ProviderName)
-	_, err := mskClient.CreateCustomPlugin(ctx, &kafkaconnect.CreateCustomPluginInput{
+	mskClient, err := client.MSK(ctx, p.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
+	_, err = mskClient.CreateCustomPlugin(ctx, &kafkaconnect.CreateCustomPluginInput{
 		Name:        aws.String(p.Name),
 		Description: p.Description,
 		ContentType: mskTypes.CustomPluginContentType(p.ContentType),
@@ -199,7 +209,11 @@ func (p MSKPlugin) applyDiffs(ctx context.Context, diffs ResourceDiff) error {
 		return errors.Errorf("cannot retrieve existing plugin")
 	}
 
-	mskClient := awsw.NewMSK(ctx, p.Context.ProviderName)
+	mskClient, err := awsw.NewMSK(ctx, p.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	if pluginDiffs.tagsDiff {
 		upserts := pluginDiffs.tagDiff.Upserts()
 		if len(upserts) > 0 {
@@ -334,7 +348,10 @@ func (p MSKPlugin) Destroy(ctx context.Context) error {
 		return nil
 	}
 
-	mskClient := client.MSK(ctx, p.Context.ProviderName)
+	mskClient, err := client.MSK(ctx, p.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	_, err = mskClient.DeleteCustomPlugin(ctx, &kafkaconnect.DeleteCustomPluginInput{
 		CustomPluginArn: existing._arn,
@@ -353,7 +370,11 @@ func (p MSKPlugin) Destroy(ctx context.Context) error {
 
 // fetchExisting returns the existing kafka plugin details if found
 func (p MSKPlugin) fetchExisting(ctx context.Context) (*MSKPlugin, error) {
-	mskClient := client.MSK(ctx, p.Context.ProviderName)
+	mskClient, err := client.MSK(ctx, p.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	nextToken := ""
 	for {
 		out, err := mskClient.ListCustomPlugins(ctx, &kafkaconnect.ListCustomPluginsInput{
@@ -393,7 +414,11 @@ func (p MSKPlugin) fetchExisting(ctx context.Context) (*MSKPlugin, error) {
 				bucket := strings.TrimPrefix(*out.LatestRevision.Location.S3Location.BucketArn, "arn:aws:s3:::")
 
 				// file content
-				sha, err := awsw.NewS3(ctx, p.Context.ProviderName).GetObjectChecksum(ctx, bucket, *out.LatestRevision.Location.S3Location.FileKey, out.LatestRevision.Location.S3Location.ObjectVersion)
+				s3Svc, err := awsw.NewS3(ctx, p.Context.ProviderName)
+				if err != nil {
+					return nil, err
+				}
+				sha, err := s3Svc.GetObjectChecksum(ctx, bucket, *out.LatestRevision.Location.S3Location.FileKey, out.LatestRevision.Location.S3Location.ObjectVersion)
 				if err != nil {
 					return nil, errors.Wrapf(err, "error getting checksum for object %v:%v", bucket, *out.LatestRevision.Location.S3Location.FileKey)
 				}

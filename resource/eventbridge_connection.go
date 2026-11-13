@@ -25,7 +25,7 @@ import (
 // exists only so Validate can reject a config that sets it, instead of dropping the
 // value silently.
 type EventBridgeApiConnection struct {
-	BaseResource `yaml:",inline"`
+	BaseResource         `yaml:",inline"`
 	Arn                  string                           `yaml:"-"`
 	Name                 string                           `yaml:"name"`
 	Description          *string                          `yaml:"description"`
@@ -67,15 +67,19 @@ func (c EventBridgeApiConnection) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields.
-func (c *EventBridgeApiConnection) Normalize(ctx context.Context) {
+func (c *EventBridgeApiConnection) Normalize(ctx context.Context) error {
 
 	if c.ConnectionParameters != nil {
 
 		// api-key value is always replaced from a secrets manager secret, value supplied as secretName:key
 		if c.ConnectionParameters.ApiKeyValue != nil {
-			val, err := awsw.NewSecretsManager(ctx, c.Context.ProviderName).GetValueBySecretId(ctx, *c.ConnectionParameters.ApiKeyValue)
+			secretsManagerSvc, err := awsw.NewSecretsManager(ctx, c.Context.ProviderName)
 			if err != nil {
-				panic(err)
+				return err
+			}
+			val, err := secretsManagerSvc.GetValueBySecretId(ctx, *c.ConnectionParameters.ApiKeyValue)
+			if err != nil {
+				return err
 			}
 			c.ConnectionParameters.ApiKeyValue = val
 		}
@@ -86,9 +90,13 @@ func (c *EventBridgeApiConnection) Normalize(ctx context.Context) {
 			for n, hp := range c.ConnectionParameters.Parameters.HeaderParameters {
 				hpp := &hp
 				if hpp.Secret != nil {
-					val, err := awsw.NewSecretsManager(ctx, c.Context.ProviderName).GetValueBySecretId(ctx, *hpp.Secret)
+					secretsManagerSvc2, err := awsw.NewSecretsManager(ctx, c.Context.ProviderName)
 					if err != nil {
-						panic(err)
+						return err
+					}
+					val, err := secretsManagerSvc2.GetValueBySecretId(ctx, *hpp.Secret)
+					if err != nil {
+						return err
 					}
 					hpp.Value = val
 					hpp.Secret = nil // nilling it so we can use reflect.DeepEquals comparison in Compare()
@@ -99,9 +107,13 @@ func (c *EventBridgeApiConnection) Normalize(ctx context.Context) {
 			for n, bp := range c.ConnectionParameters.Parameters.BodyParameters {
 				bpp := &bp
 				if bpp.Secret != nil {
-					val, err := awsw.NewSecretsManager(ctx, c.Context.ProviderName).GetValueBySecretId(ctx, *bpp.Secret)
+					secretsManagerSvc3, err := awsw.NewSecretsManager(ctx, c.Context.ProviderName)
 					if err != nil {
-						panic(err)
+						return err
+					}
+					val, err := secretsManagerSvc3.GetValueBySecretId(ctx, *bpp.Secret)
+					if err != nil {
+						return err
 					}
 					bpp.Value = val
 					bpp.Secret = nil // nilling it so we can use reflect.DeepEquals comparison in Compare()
@@ -112,9 +124,13 @@ func (c *EventBridgeApiConnection) Normalize(ctx context.Context) {
 			for n, qp := range c.ConnectionParameters.Parameters.QueryStringParameters {
 				qpp := &qp
 				if qpp.Secret != nil {
-					val, err := awsw.NewSecretsManager(ctx, c.Context.ProviderName).GetValueBySecretId(ctx, *qpp.Secret)
+					secretsManagerSvc4, err := awsw.NewSecretsManager(ctx, c.Context.ProviderName)
 					if err != nil {
-						panic(err)
+						return err
+					}
+					val, err := secretsManagerSvc4.GetValueBySecretId(ctx, *qpp.Secret)
+					if err != nil {
+						return err
 					}
 					qpp.Value = val
 					qpp.Secret = nil // nilling it so we can use reflect.DeepEquals comparison in Compare()
@@ -124,6 +140,7 @@ func (c *EventBridgeApiConnection) Normalize(ctx context.Context) {
 			}
 		}
 	}
+	return nil
 }
 
 // Validate checks that the input provided is correct
@@ -223,7 +240,11 @@ func (c EventBridgeApiConnection) Destroy(ctx context.Context) error {
 		return nil
 	}
 
-	ebClient := client.EventBridge(ctx, c.Context.ProviderName)
+	ebClient, err := client.EventBridge(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	_, err = ebClient.DeleteConnection(ctx, &eventbridge.DeleteConnectionInput{
 		Name: aws.String(c.Name),
 	})
@@ -373,7 +394,11 @@ func (c EventBridgeApiConnection) apply(ctx context.Context) error {
 		InvocationHttpParameters: c.getConnectHttpParameters(ctx),
 	}
 
-	ebClient := client.EventBridge(ctx, c.Context.ProviderName)
+	ebClient, err := client.EventBridge(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	outc, err := ebClient.CreateConnection(ctx, &eventbridge.CreateConnectionInput{
 		Name:              aws.String(c.Name),
 		Description:       c.Description,
@@ -415,7 +440,10 @@ func (c EventBridgeApiConnection) applyDiffs(ctx context.Context, diffs Resource
 	}
 
 	var err error
-	client := client.EventBridge(ctx, c.Context.ProviderName)
+	client, err := client.EventBridge(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	updateInput := &eventbridge.UpdateConnectionInput{
 		Name: aws.String(c.Name),
@@ -448,7 +476,10 @@ func (c EventBridgeApiConnection) applyDiffs(ctx context.Context, diffs Resource
 // fetchExisting fetches the existing eventbridge connection or error
 func (c EventBridgeApiConnection) fetchExisting(ctx context.Context) (*EventBridgeApiConnection, error) {
 
-	ebClient := client.EventBridge(ctx, c.Context.ProviderName)
+	ebClient, err := client.EventBridge(ctx, c.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
 
 	// fetch connection info
 	var apiconn *EventBridgeApiConnection
@@ -473,7 +504,12 @@ func (c EventBridgeApiConnection) fetchExisting(ctx context.Context) (*EventBrid
 
 				connParms := &EventBridgeConnectionParameters{}
 				if outcd.SecretArn != nil {
-					err = awsw.NewSecretsManager(ctx, c.Context.ProviderName).GetValueAsJson(ctx, *outcd.SecretArn, connParms)
+					var secretsManagerSvc awsw.SecretsManager
+					secretsManagerSvc, err = awsw.NewSecretsManager(ctx, c.Context.ProviderName)
+					if err != nil {
+						return nil, err
+					}
+					err = secretsManagerSvc.GetValueAsJson(ctx, *outcd.SecretArn, connParms)
 					if err != nil {
 						return nil, err
 					}

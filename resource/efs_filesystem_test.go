@@ -15,7 +15,9 @@ func TestEFSFileSystem_Normalize(t *testing.T) {
 
 	t.Run("sets defaults and does not synthesize a Name tag", func(t *testing.T) {
 		r := &EFSFileSystem{Name: "shared"}
-		r.Normalize(ctx)
+		if err := r.Normalize(ctx); err != nil {
+			t.Fatal(err)
+		}
 		assert.True(t, aws.ToBool(r.Encrypted))
 		assert.Equal(t, "generalPurpose", r.PerformanceMode)
 		assert.Equal(t, "bursting", r.ThroughputMode)
@@ -31,7 +33,9 @@ func TestEFSFileSystem_Normalize(t *testing.T) {
 			ThroughputMode:  "Provisioned",
 			BackupPolicy:    aws.String("enabled"),
 		}
-		r.Normalize(ctx)
+		if err := r.Normalize(ctx); err != nil {
+			t.Fatal(err)
+		}
 		assert.Equal(t, "maxIO", r.PerformanceMode)
 		assert.Equal(t, "provisioned", r.ThroughputMode)
 		assert.Equal(t, "ENABLED", *r.BackupPolicy)
@@ -43,7 +47,9 @@ func TestEFSFileSystem_Normalize(t *testing.T) {
 			Tags:       map[string]string{"Name": "custom", "env": "prod"},
 			GlobalTags: map[string]string{"owner": "team-a", "env": "stg"},
 		}
-		r.Normalize(ctx)
+		if err := r.Normalize(ctx); err != nil {
+			t.Fatal(err)
+		}
 		assert.Equal(t, "custom", r.Tags["Name"]) // explicit wins
 		assert.Equal(t, "prod", r.Tags["env"])    // local wins over global
 		assert.Equal(t, "team-a", r.Tags["owner"])
@@ -61,7 +67,9 @@ func TestEFSFileSystem_Normalize(t *testing.T) {
 			},
 			AccessPoints: []*EFSAccessPoint{{Name: "ap-1"}},
 		}
-		r.Normalize(ctx)
+		if err := r.Normalize(ctx); err != nil {
+			t.Fatal(err)
+		}
 
 		assert.Equal(t, "shared", r.Tags[util.BuilditResourceIDTagKey])
 

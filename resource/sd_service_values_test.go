@@ -91,7 +91,9 @@ func TestSDServiceValidateCNAMERequiresWeighted(t *testing.T) {
 			},
 		},
 	}
-	svc.Normalize(context.Background())
+	if err := svc.Normalize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 
 	err := svc.Validate(context.Background())
 	if err == nil {
@@ -131,7 +133,9 @@ func TestSDServiceNormalizeRoutingPolicyDefaults(t *testing.T) {
 				Records:       tt.records,
 			}
 
-			svc.Normalize(context.Background())
+			if err := svc.Normalize(context.Background()); err != nil {
+				t.Fatal(err)
+			}
 			if svc.RoutingPolicy != tt.wantPolicy {
 				t.Fatalf("Normalize() routingPolicy = %v, want %v", svc.RoutingPolicy, tt.wantPolicy)
 			}

@@ -26,7 +26,9 @@ func testVpcOrigin() *CloudfrontVpcOrigin {
 		Name:   "test-vpc-origin",
 		Target: testLBArn,
 	}
-	r.Normalize(context.Background())
+	if err := r.Normalize(context.Background()); err != nil {
+		panic(err) // fixture helper, no *testing.T in scope
+	}
 	return r
 }
 
@@ -57,7 +59,7 @@ func TestCloudfrontVpcOrigin_Normalize_SslProtocolCaseInsensitive(t *testing.T) 
 				Target:            testLBArn,
 				OriginSSLProtocol: aws.String(tt.in),
 			}
-			r.Normalize(context.Background())
+			require.NoError(t, r.Normalize(context.Background()))
 			assert.Equal(t, tt.want, aws.ToString(r.OriginSSLProtocol))
 		})
 	}
@@ -70,7 +72,7 @@ func TestCloudfrontVpcOrigin_Normalize_MergesTags(t *testing.T) {
 		Tags:       map[string]string{"Environment": "production"},
 		GlobalTags: map[string]string{"Owner": "team-a", "Environment": "should-not-override"},
 	}
-	r.Normalize(context.Background())
+	require.NoError(t, r.Normalize(context.Background()))
 	assert.Equal(t, "production", r.Tags["Environment"])
 	assert.Equal(t, "team-a", r.Tags["Owner"])
 }
@@ -81,7 +83,7 @@ func TestCloudfrontVpcOrigin_Normalize_GlobalTagsOnly(t *testing.T) {
 		Target:     testLBArn,
 		GlobalTags: map[string]string{"Owner": "team-a"},
 	}
-	r.Normalize(context.Background())
+	require.NoError(t, r.Normalize(context.Background()))
 	assert.Equal(t, map[string]string{"Owner": "team-a"}, r.Tags)
 }
 

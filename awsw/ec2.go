@@ -19,8 +19,12 @@ type EC2 struct {
 }
 
 // NewEC2 creates a new instance of EC2 wrapper
-func NewEC2(ctx context.Context, providerName string) EC2 {
-	return EC2{client.EC2(ctx, providerName)}
+func NewEC2(ctx context.Context, providerName string) (EC2, error) {
+	c, err := client.EC2(ctx, providerName)
+	if err != nil {
+		return EC2{}, err
+	}
+	return EC2{c}, nil
 }
 
 // VpcArnForIdentifier resolves a VPC ARN from an identifier (ARN, ID, or Name tag).
@@ -32,10 +36,12 @@ func (e EC2) VpcArnForIdentifier(ctx context.Context, identifier string) (*strin
 
 	ec2Service := e
 	if provider != "" {
-		if _, err := client.Provider(provider); err != nil {
-			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
+		var err error
+		ec2Service, err = NewEC2(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		ec2Service = NewEC2(ctx, provider)
+
 	}
 
 	// Tier 1: Try by ID
@@ -86,10 +92,12 @@ func (e EC2) SubnetArnForIdentifier(ctx context.Context, identifier string) (*st
 
 	ec2Service := e
 	if provider != "" {
-		if _, err := client.Provider(provider); err != nil {
-			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
+		var err error
+		ec2Service, err = NewEC2(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		ec2Service = NewEC2(ctx, provider)
+
 	}
 
 	// Tier 1: Try by ID
@@ -140,10 +148,12 @@ func (e EC2) SecurityGroupArnForIdentifier(ctx context.Context, identifier strin
 
 	ec2Service := e
 	if provider != "" {
-		if _, err := client.Provider(provider); err != nil {
-			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
+		var err error
+		ec2Service, err = NewEC2(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		ec2Service = NewEC2(ctx, provider)
+
 	}
 
 	// Tier 1: Try by ID

@@ -29,7 +29,7 @@ const (
 
 // MSKConnector represents a msk connector
 type MSKConnector struct {
-	BaseResource `yaml:",inline"`
+	BaseResource            `yaml:",inline"`
 	Name                    string            `yaml:"-"`
 	Description             *string           `yaml:"description"`
 	Type                    *string           `yaml:"type"`
@@ -94,7 +94,7 @@ func (c MSKConnector) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields.
-func (c *MSKConnector) Normalize(ctx context.Context) {
+func (c *MSKConnector) Normalize(ctx context.Context) error {
 	// tags
 	if c.Tags == nil {
 		c.Tags = make(map[string]string)
@@ -109,12 +109,16 @@ func (c *MSKConnector) Normalize(ctx context.Context) {
 
 	// secrets
 	for k, v := range c.Secrets {
-		val, err := awsw.NewSecretsManager(ctx, c.Context.ProviderName).GetValueBySecretId(ctx, v)
+		secretsManagerSvc, err := awsw.NewSecretsManager(ctx, c.Context.ProviderName)
+		if err != nil {
+			return err
+		}
+		val, err := secretsManagerSvc.GetValueBySecretId(ctx, v)
 		if err != nil {
 			log.Debugf("Provider: %v", c.Context.ProviderName)
 			log.Debugf("Secret Id: %v-> %v", k, v)
 			log.Debugf("error occurred %v", err.Error())
-			panic(err)
+			return err
 		}
 		c.Secrets[k] = *val
 	}
@@ -135,24 +139,29 @@ func (c *MSKConnector) Normalize(ctx context.Context) {
 	// set resource arns
 	if c.WorkerConfiguration != nil {
 		if err := c.setWorkerConfigurationArn(ctx); err != nil {
-			panic(err)
+			return err
 		}
 	}
 	if err := c.setPluginArn(ctx); err != nil {
-		panic(err)
+		return err
 	}
 	if err := c.setClusterInfo(ctx); err != nil {
-		panic(err)
+		return err
 	}
-	roleArn, err := awsw.NewIAM(ctx, c.Context.ProviderName).RoleArnForName(ctx, c.Role)
+	iamSvc, err := awsw.NewIAM(ctx, c.Context.ProviderName)
 	if err != nil {
-		panic(err)
+		return err
+	}
+	roleArn, err := iamSvc.RoleArnForName(ctx, c.Role)
+	if err != nil {
+		return err
 	}
 	c._roleArn = roleArn
 
 	if c.Type != nil && *c.Type == Autoscaling {
 		c.Capacity.WorkerCount = nil
 	}
+	return nil
 }
 
 // Validate checks that the input provided is correct
@@ -213,7 +222,11 @@ func (c MSKConnector) Apply(ctx context.Context) error {
 	if err = c.setClusterInfo(ctx); err != nil {
 		return errors.Wrap(err, fmt.Sprintf("failed to get cluster info for: %s", c.Cluster))
 	}
-	roleArn, err := awsw.NewIAM(ctx, c.Context.ProviderName).RoleArnForName(ctx, c.Role)
+	iamSvc, err := awsw.NewIAM(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+	roleArn, err := iamSvc.RoleArnForName(ctx, c.Role)
 	if err != nil {
 		return errors.Wrap(err, fmt.Sprintf("failed to get arn for resource: %s", c.Role))
 	}
@@ -311,8 +324,12 @@ func (c MSKConnector) apply(ctx context.Context) error {
 		}
 	}
 
-	mskClient := client.MSK(ctx, c.Context.ProviderName)
-	_, err := mskClient.CreateConnector(ctx, &kafkaconnect.CreateConnectorInput{
+	mskClient, err := client.MSK(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
+	_, err = mskClient.CreateConnector(ctx, &kafkaconnect.CreateConnectorInput{
 		ConnectorName:          aws.String(c.Name),
 		ConnectorDescription:   c.Description,
 		Capacity:               &capacity,
@@ -368,9 +385,11 @@ func (c MSKConnector) applyDiffs(ctx context.Context, diffs ResourceDiff) error 
 		return errors.Errorf("cannot retrieve existing msk connector")
 	}
 
-	mskClient := awsw.NewMSK(ctx, c.Context.ProviderName)
+	mskClient, err := awsw.NewMSK(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
-	var err error
 	// Update types are mutually exclusive. Exactly one of the following is required: capacity, connectorConfiguration.
 	// Update connector configuration
 	if connDiffs.connectorConfigurationDiff {
@@ -707,7 +726,10 @@ func (c MSKConnector) Destroy(ctx context.Context) error {
 		return nil
 	}
 
-	mskClient := client.MSK(ctx, c.Context.ProviderName)
+	mskClient, err := client.MSK(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	if _, err = mskClient.DeleteConnector(ctx, &kafkaconnect.DeleteConnectorInput{
 		ConnectorArn: existing._arn,
@@ -728,7 +750,11 @@ func (c MSKConnector) Destroy(ctx context.Context) error {
 
 // fetchExisting returns the existing msk connector details if found
 func (c MSKConnector) fetchExisting(ctx context.Context) (*MSKConnector, error) {
-	mskClient := client.MSK(ctx, c.Context.ProviderName)
+	mskClient, err := client.MSK(ctx, c.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	nextToken := ""
 	var found *mskTypes.ConnectorSummary
 	for {
@@ -830,7 +856,11 @@ func (c MSKConnector) fetchExisting(ctx context.Context) (*MSKConnector, error) 
 }
 
 func (c *MSKConnector) setPluginArn(ctx context.Context) error {
-	mskClient := client.MSK(ctx, c.Context.ProviderName)
+	mskClient, err := client.MSK(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	nextToken := ""
 	for {
 		out, err := mskClient.ListCustomPlugins(ctx, &kafkaconnect.ListCustomPluginsInput{
@@ -860,7 +890,11 @@ func (c *MSKConnector) setPluginArn(ctx context.Context) error {
 }
 
 func (c *MSKConnector) setWorkerConfigurationArn(ctx context.Context) error {
-	mskClient := client.MSK(ctx, c.Context.ProviderName)
+	mskClient, err := client.MSK(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	nextToken := ""
 	for {
 		out, err := mskClient.ListWorkerConfigurations(ctx, &kafkaconnect.ListWorkerConfigurationsInput{
@@ -890,7 +924,11 @@ func (c *MSKConnector) setWorkerConfigurationArn(ctx context.Context) error {
 }
 
 func (c *MSKConnector) setClusterInfo(ctx context.Context) error {
-	kafkaClient := client.Kafka(ctx, c.Context.ProviderName)
+	kafkaClient, err := client.Kafka(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	nextToken := ""
 	var arn *string
 	for {

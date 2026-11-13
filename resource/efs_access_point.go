@@ -60,12 +60,13 @@ type EFSCreationInfo struct {
 // Normalize sets defaults and sanitizes fields. globalTags are merged in from the parent. The
 // `Name` tag is not synthesized: `name` is the ClientToken (identity), not a display tag, so a Name
 // tag is applied only when the user sets one under `tags`.
-func (r *EFSAccessPoint) Normalize(ctx context.Context, globalTags map[string]string) {
+func (r *EFSAccessPoint) Normalize(ctx context.Context, globalTags map[string]string) error {
 	r.Name = strings.TrimSpace(r.Name)
 	if r.Tags == nil {
 		r.Tags = make(map[string]string)
 	}
 	ResourceTags(r.Tags).Merge(globalTags)
+	return nil
 }
 
 // validate returns validation messages for this access point, prefixed for the parent's report.

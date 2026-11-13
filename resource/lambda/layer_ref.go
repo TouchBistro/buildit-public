@@ -41,19 +41,24 @@ func (r LayerRef) key() string {
 
 // private
 
-func (r *LayerRef) Normalize(ctx context.Context, rctx resource.Context) {
+func (r *LayerRef) Normalize(ctx context.Context, rctx resource.Context) error {
 
 	if r.Arn == nil {
 		var layerVer *int64
 		if r.Version != 0 {
 			layerVer = &r.Version
 		}
-		arn, varn, err := awsw.NewLambda(ctx, rctx.ProviderName).LayerArnForNameAndVersion(ctx, r.Name, layerVer)
+		lambdaSvc, err := awsw.NewLambda(ctx, rctx.ProviderName)
+		if err != nil {
+			return err
+		}
+		arn, varn, err := lambdaSvc.LayerArnForNameAndVersion(ctx, r.Name, layerVer)
 		if arn != nil && err == nil {
 			r.Arn = arn
 			r.VersionArn = varn
 		}
 	}
+	return nil
 }
 
 // equals compares this arn with the other

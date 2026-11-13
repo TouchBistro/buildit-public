@@ -29,7 +29,9 @@ func testDist() *CloudfrontDistribution {
 		DefaultCacheBehavior: CloudfrontCacheBehavior{TargetOriginId: "primary"},
 		Logging:              &CloudfrontLogging{Bucket: "logs.s3.amazonaws.com", Prefix: aws.String("cf/test")},
 	}
-	r.Normalize(context.Background())
+	if err := r.Normalize(context.Background()); err != nil {
+		panic(err) // fixture helper, no *testing.T in scope
+	}
 	return r
 }
 
@@ -80,7 +82,7 @@ func TestCloudfrontDistribution_Normalize_MergesTags(t *testing.T) {
 		Tags:       map[string]string{"Environment": "production"},
 		GlobalTags: map[string]string{"Owner": "team-a", "Environment": "should-not-override"},
 	}
-	r.Normalize(context.Background())
+	require.NoError(t, r.Normalize(context.Background()))
 	assert.Equal(t, "production", r.Tags["Environment"])
 	assert.Equal(t, "team-a", r.Tags["Owner"])
 }
@@ -95,7 +97,7 @@ func TestCloudfrontDistribution_Normalize_CustomOriginDefaults(t *testing.T) {
 		}},
 		DefaultCacheBehavior: CloudfrontCacheBehavior{TargetOriginId: "web"},
 	}
-	r.Normalize(context.Background())
+	require.NoError(t, r.Normalize(context.Background()))
 
 	o := r.Origins[0]
 	assert.Equal(t, int32(80), aws.ToInt32(o.HTTPPort))
@@ -116,7 +118,7 @@ func TestCloudfrontDistribution_Normalize_S3TargetOriginRequestPolicy(t *testing
 		}},
 		DefaultCacheBehavior: CloudfrontCacheBehavior{TargetOriginId: "assets"},
 	}
-	r.Normalize(context.Background())
+	require.NoError(t, r.Normalize(context.Background()))
 
 	// Host-header-forwarding policies are rejected by AWS for S3 targets, so the
 	// default must switch to the managed CORS-S3Origin policy.
@@ -133,7 +135,7 @@ func TestCloudfrontDistribution_Normalize_S3OriginNoTimeoutDefaults(t *testing.T
 		}},
 		DefaultCacheBehavior: CloudfrontCacheBehavior{TargetOriginId: "assets"},
 	}
-	r.Normalize(context.Background())
+	require.NoError(t, r.Normalize(context.Background()))
 
 	// S3 origins carry no read/keep-alive timeouts, so they must stay nil.
 	o := r.Origins[0]
@@ -175,7 +177,7 @@ func TestCloudfrontDistribution_Normalize_CaseInsensitiveEnums(t *testing.T) {
 			},
 		},
 	}
-	r.Normalize(context.Background())
+	require.NoError(t, r.Normalize(context.Background()))
 
 	assert.Equal(t, CloudfrontHTTPVersion2and3, aws.ToString(r.HTTPVersion))
 	assert.Equal(t, CloudfrontPriceClass100, aws.ToString(r.PriceClass))
@@ -259,7 +261,7 @@ func TestCloudfrontDistribution_Normalize_ManagedPolicyNames(t *testing.T) {
 			r.DefaultCacheBehavior.CachePolicyId = aws.String(tt.cachePolicy)
 			r.DefaultCacheBehavior.OriginRequestPolicyId = aws.String(tt.originRequestPolicy)
 			r.DefaultCacheBehavior.ResponseHeadersPolicyId = aws.String(tt.responseHeadersPolicy)
-			r.Normalize(context.Background())
+			require.NoError(t, r.Normalize(context.Background()))
 
 			b := r.DefaultCacheBehavior
 			assert.Equal(t, tt.wantCache, aws.ToString(b.CachePolicyId))
@@ -305,7 +307,7 @@ func TestCloudfrontDistribution_Validate_Methods(t *testing.T) {
 					CachedMethods:  tt.cached,
 				},
 			}
-			r.Normalize(ctx)
+			require.NoError(t, r.Normalize(ctx))
 			err := r.Validate(ctx)
 			if tt.wantErr == "" {
 				assert.Nil(t, err)
@@ -332,7 +334,7 @@ func TestCloudfrontDistribution_Validate_S3IncompatiblePolicyByName(t *testing.T
 					OriginRequestPolicyId: aws.String(policy),
 				},
 			}
-			r.Normalize(ctx)
+			require.NoError(t, r.Normalize(ctx))
 			err := r.Validate(ctx)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "cannot be used with s3 target origin")
@@ -348,7 +350,7 @@ func TestCloudfrontDistribution_GenerateConfig_ManagedNamesNoAWSCalls(t *testing
 	r.DefaultCacheBehavior.CachePolicyId = aws.String("CachingOptimized")
 	r.DefaultCacheBehavior.OriginRequestPolicyId = aws.String("AllViewer")
 	r.DefaultCacheBehavior.ResponseHeadersPolicyId = aws.String("SecurityHeadersPolicy")
-	r.Normalize(ctx)
+	require.NoError(t, r.Normalize(ctx))
 
 	cfg, err := r.generateConfig(ctx)
 	require.NoError(t, err)
@@ -367,7 +369,7 @@ func TestCloudfrontDistribution_Validate(t *testing.T) {
 
 	t.Run("missing origins", func(t *testing.T) {
 		r := &CloudfrontDistribution{Name: "x", DefaultCacheBehavior: CloudfrontCacheBehavior{TargetOriginId: "primary"}}
-		r.Normalize(ctx)
+		require.NoError(t, r.Normalize(ctx))
 		err := r.Validate(ctx)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "at least one origin")
@@ -379,7 +381,7 @@ func TestCloudfrontDistribution_Validate(t *testing.T) {
 			Origins:              []CloudfrontOrigin{{Name: "o1", Target: "t"}},
 			DefaultCacheBehavior: CloudfrontCacheBehavior{TargetOriginId: "o1"},
 		}
-		r.Normalize(ctx)
+		require.NoError(t, r.Normalize(ctx))
 		err := r.Validate(ctx)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "type is required")
@@ -391,7 +393,7 @@ func TestCloudfrontDistribution_Validate(t *testing.T) {
 			Origins:              []CloudfrontOrigin{{Name: "o1", Type: "alb", Target: "t"}},
 			DefaultCacheBehavior: CloudfrontCacheBehavior{TargetOriginId: "o1"},
 		}
-		r.Normalize(ctx)
+		require.NoError(t, r.Normalize(ctx))
 		err := r.Validate(ctx)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid type")
@@ -403,7 +405,7 @@ func TestCloudfrontDistribution_Validate(t *testing.T) {
 			Origins:              []CloudfrontOrigin{{Name: "o1", Type: CloudfrontOriginTypeVpc}},
 			DefaultCacheBehavior: CloudfrontCacheBehavior{TargetOriginId: "o1"},
 		}
-		r.Normalize(ctx)
+		require.NoError(t, r.Normalize(ctx))
 		err := r.Validate(ctx)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "target is required")
@@ -420,7 +422,7 @@ func TestCloudfrontDistribution_Validate(t *testing.T) {
 			}},
 			DefaultCacheBehavior: CloudfrontCacheBehavior{TargetOriginId: "o1"},
 		}
-		r.Normalize(ctx)
+		require.NoError(t, r.Normalize(ctx))
 		err := r.Validate(ctx)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "only apply to custom origins")
@@ -437,7 +439,7 @@ func TestCloudfrontDistribution_Validate(t *testing.T) {
 			}},
 			DefaultCacheBehavior: CloudfrontCacheBehavior{TargetOriginId: "o1"},
 		}
-		r.Normalize(ctx)
+		require.NoError(t, r.Normalize(ctx))
 		err := r.Validate(ctx)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "do not apply to s3 origins")
@@ -460,7 +462,7 @@ func TestCloudfrontDistribution_Validate(t *testing.T) {
 			},
 			DefaultCacheBehavior: CloudfrontCacheBehavior{TargetOriginId: "o1"},
 		}
-		r.Normalize(ctx)
+		require.NoError(t, r.Normalize(ctx))
 		err := r.Validate(ctx)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "duplicate origin name")
@@ -475,7 +477,7 @@ func TestCloudfrontDistribution_Validate(t *testing.T) {
 				OriginRequestPolicyId: aws.String(CloudfrontOriginRequestPolicyAllViewerAndCF),
 			},
 		}
-		r.Normalize(ctx)
+		require.NoError(t, r.Normalize(ctx))
 		err := r.Validate(ctx)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "cannot be used with s3 target origin")
@@ -487,7 +489,7 @@ func TestCloudfrontDistribution_Validate(t *testing.T) {
 			Origins:              []CloudfrontOrigin{{Name: "o1", Type: CloudfrontOriginTypeVpc, Target: "vo_1"}},
 			DefaultCacheBehavior: CloudfrontCacheBehavior{TargetOriginId: "missing"},
 		}
-		r.Normalize(ctx)
+		require.NoError(t, r.Normalize(ctx))
 		err := r.Validate(ctx)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "does not match any origin id")
@@ -622,7 +624,7 @@ func TestCloudfrontDistribution_Compare_DiffShowsUserSuppliedValues(t *testing.T
 	desired := testDist()
 	desired.DefaultCacheBehavior.CachePolicyId = aws.String("CachingOptimized")
 	desired.WebACLName = aws.String("arn:aws:wafv2:us-east-1:1:global/webacl/new-web-acl/abc") // memoized form; skips the lookup
-	desired.Normalize(ctx)                                                                     // canonicalize the managed policy name to its id
+	require.NoError(t, desired.Normalize(ctx))                                                 // canonicalize the managed policy name to its id
 	// simulate what web ACL resolution records (the lookup itself needs AWS)
 	desired.displayValues["arn:aws:wafv2:us-east-1:1:global/webacl/new-web-acl/abc"] = "new-web-acl"
 	desiredCfg, err := desired.generateConfig(ctx)
@@ -795,7 +797,7 @@ func TestCloudfrontDistribution_Compare_DetectsChanges(t *testing.T) {
 				Name: "extra", Type: CloudfrontOriginTypeCustom, Target: "api.example.com",
 				resolvedDomainName: "api.example.com",
 			})
-			r.Normalize(context.Background())
+			require.NoError(t, r.Normalize(context.Background()))
 		}, `origin "extra": added (type custom, domain api.example.com)`},
 		{"origin type change", func(r *CloudfrontDistribution) {
 			r.Origins[0].Type = CloudfrontOriginTypeCustom
@@ -878,7 +880,7 @@ func TestCloudfrontDistribution_Compare_Changes(t *testing.T) {
 				Name: "extra", Type: CloudfrontOriginTypeCustom, Target: "api.example.com",
 				resolvedDomainName: "api.example.com",
 			})
-			r.Normalize(ctx)
+			require.NoError(t, r.Normalize(ctx))
 		}, []Change{{Field: "origins[extra]", From: "", To: "type=custom,target=api.example.com"}}},
 		{"origin removed", func(r *CloudfrontDistribution) { r.Origins = nil },
 			[]Change{{Field: "origins[primary]", From: "type=vpc,target=alb.internal.example.com", To: ""}}},
@@ -938,7 +940,7 @@ func TestCloudfrontDistribution_Compare_ChangesShowUserSuppliedValues(t *testing
 	desired.DefaultCacheBehavior.CachePolicyId = aws.String("CachingOptimized")
 	desired.DefaultCacheBehavior.OriginRequestPolicyId = aws.String("AllViewer")
 	desired.WebACLName = aws.String("arn:aws:wafv2:us-east-1:1:global/webacl/new-web-acl/abc")
-	desired.Normalize(ctx) // canonicalize the managed policy names to their ids
+	require.NoError(t, desired.Normalize(ctx)) // canonicalize the managed policy names to their ids
 	// simulate what certificate and web ACL resolution record (the lookups need AWS)
 	desired.displayValues[certArn] = "cdn.example.com"
 	desired.displayValues["arn:aws:wafv2:us-east-1:1:global/webacl/new-web-acl/abc"] = "new-web-acl"
@@ -1026,7 +1028,7 @@ func TestCloudfrontDistribution_ResolveOrigins_NoAWSCalls(t *testing.T) {
 		},
 		DefaultCacheBehavior: CloudfrontCacheBehavior{TargetOriginId: "web"},
 	}
-	r.Normalize(ctx)
+	require.NoError(t, r.Normalize(ctx))
 
 	require.NoError(t, r.resolveOrigins(ctx))
 	assert.Equal(t, "api.example.com", r.Origins[0].resolvedDomainName)
@@ -1148,6 +1150,6 @@ my-cdn:
 
 	// Normalize + Validate must accept it
 	r.Name = "my-cdn"
-	r.Normalize(context.Background())
+	require.NoError(t, r.Normalize(context.Background()))
 	assert.NoError(t, r.Validate(context.Background()))
 }

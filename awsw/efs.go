@@ -43,8 +43,12 @@ type EFS struct {
 }
 
 // NewEFS creates a new instance of EFS wrapper
-func NewEFS(ctx context.Context, providerName string) EFS {
-	return EFS{client.EFS(ctx, providerName)}
+func NewEFS(ctx context.Context, providerName string) (EFS, error) {
+	c, err := client.EFS(ctx, providerName)
+	if err != nil {
+		return EFS{}, err
+	}
+	return EFS{c}, nil
 }
 
 // forProvider returns the wrapper scoped to the supplied provider, or the receiver when the
@@ -53,10 +57,11 @@ func (e EFS) forProvider(ctx context.Context, provider string) (EFS, error) {
 	if provider == "" {
 		return e, nil
 	}
-	if _, err := client.Provider(provider); err != nil {
-		return EFS{}, errors.Wrapf(err, "provider %q not found", provider)
+	efsSvc, err := NewEFS(ctx, provider)
+	if err != nil {
+		return EFS{}, err
 	}
-	return NewEFS(ctx, provider), nil
+	return efsSvc, nil
 }
 
 // FileSystemArnForIdentifier resolves an EFS File System ARN from an identifier (ARN or FileSystemId).

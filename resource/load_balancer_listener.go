@@ -39,7 +39,7 @@ func (l LBListener) Identifier() string {
 	return l.Name
 }
 
-func (l *LBListener) Normalize(ctx context.Context, rctx Context) {
+func (l *LBListener) Normalize(ctx context.Context, rctx Context) error {
 
 	// upper case the protocol; aws-sdk-v2 doesn't allow lower case protocol names..
 	l.Protocol = strings.ToUpper(l.Protocol)
@@ -49,8 +49,11 @@ func (l *LBListener) Normalize(ctx context.Context, rctx Context) {
 	}
 
 	for _, r := range l.Rules {
-		r.Normalize(ctx, rctx)
+		if err := r.Normalize(ctx, rctx); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // Validate the listener
@@ -98,8 +101,12 @@ func (l LBListener) Validate(ctx context.Context) error {
 // Destroy delete the listener
 func (l LBListener) Destroy(ctx context.Context, rctx Context) error {
 
-	client := client.ELB(ctx, rctx.ProviderName)
-	_, err := client.DeleteListener(ctx, &elbv2.DeleteListenerInput{
+	client, err := client.ELB(ctx, rctx.ProviderName)
+	if err != nil {
+		return err
+	}
+
+	_, err = client.DeleteListener(ctx, &elbv2.DeleteListenerInput{
 		ListenerArn: aws.String(l.LoadBalancerListenerArn),
 	})
 
@@ -179,7 +186,11 @@ func (l LBListener) equals(ctx context.Context, rctx Context, existing *elbv2typ
 
 		// extra certificates
 		// fetch additional certificates
-		respCerts, err := client.ELB(ctx, rctx.ProviderName).DescribeListenerCertificates(ctx, &elbv2.DescribeListenerCertificatesInput{
+		elbClient, err := client.ELB(ctx, rctx.ProviderName)
+		if err != nil {
+			return nil, err
+		}
+		respCerts, err := elbClient.DescribeListenerCertificates(ctx, &elbv2.DescribeListenerCertificatesInput{
 			ListenerArn: existing.ListenerArn,
 			PageSize:    aws.Int32(26),
 		})
@@ -266,7 +277,11 @@ func (l LBListener) equals(ctx context.Context, rctx Context, existing *elbv2typ
 	// find existing rules..
 	// `DescribeRules()` API will return all rules + default. So we need to ignore
 	// the default and use the reamining for comparisons
-	respRules, err := client.ELB(ctx, rctx.ProviderName).DescribeRules(ctx, &elbv2.DescribeRulesInput{
+	elbClient2, err := client.ELB(ctx, rctx.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	respRules, err := elbClient2.DescribeRules(ctx, &elbv2.DescribeRulesInput{
 		ListenerArn: existing.ListenerArn,
 		PageSize:    aws.Int32(100),
 	})
@@ -356,7 +371,11 @@ func (l LBListener) equals(ctx context.Context, rctx Context, existing *elbv2typ
 		}
 		ruleArns = append(ruleArns, *existingRules[i].RuleArn)
 	}
-	ruleTagsByArn, err := awsw.NewELB(ctx, rctx.ProviderName).GetResourceTagsBatch(ctx, ruleArns)
+	elbSvc, err := awsw.NewELB(ctx, rctx.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	ruleTagsByArn, err := elbSvc.GetResourceTagsBatch(ctx, ruleArns)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error fetching tags for load balancer rules of listener %v", l.Identifier())
 	}
@@ -376,7 +395,11 @@ func (l LBListener) equals(ctx context.Context, rctx Context, existing *elbv2typ
 	}
 
 	// tags
-	awsTags, err := awsw.NewELB(ctx, rctx.ProviderName).GetResourceTags(ctx, *existing.ListenerArn)
+	elbSvc2, err := awsw.NewELB(ctx, rctx.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	awsTags, err := elbSvc2.GetResourceTags(ctx, *existing.ListenerArn)
 	if err != nil {
 		return nil, err
 	}
@@ -403,7 +426,11 @@ func ruleField(i int) string {
 // apply makes a load balancer listener
 func (l LBListener) apply(ctx context.Context, rctx Context) error {
 
-	elbClient := client.ELB(ctx, rctx.ProviderName)
+	elbClient, err := client.ELB(ctx, rctx.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	actions, err := toAwsElbv2Actions(ctx, rctx, l.DefaultRule.Actions)
 	if err != nil {
 		return errors.Wrap(err, "error parsing default rule action")
@@ -544,12 +571,20 @@ func (l LBListener) applyDiffs(ctx context.Context, rctx Context, diffs Resource
 	// rule tags — reconciled per rule since ModifyRule takes no tags
 	for ruleArn, tagDiff := range listDiffs.ruleTagDiffs {
 		if upserts := tagDiff.Upserts(); len(upserts) > 0 {
-			if err := awsw.NewELB(ctx, rctx.ProviderName).AddResourceTags(ctx, ruleArn, upserts); err != nil {
+			elbSvc, err := awsw.NewELB(ctx, rctx.ProviderName)
+			if err != nil {
+				return err
+			}
+			if err := elbSvc.AddResourceTags(ctx, ruleArn, upserts); err != nil {
 				return errors.Wrapf(err, "error updating load balancer rule tags for listener %v", l.Identifier())
 			}
 		}
 		if len(tagDiff.Deleted) > 0 {
-			if err := awsw.NewELB(ctx, rctx.ProviderName).DeleteResourceTags(ctx, ruleArn, tagDiff.Deleted); err != nil {
+			elbSvc2, err := awsw.NewELB(ctx, rctx.ProviderName)
+			if err != nil {
+				return err
+			}
+			if err := elbSvc2.DeleteResourceTags(ctx, ruleArn, tagDiff.Deleted); err != nil {
 				return errors.Wrapf(err, "error deleting load balancer rule tags for listener %v", l.Identifier())
 			}
 		}
@@ -565,7 +600,11 @@ func (l LBListener) applyDiffs(ctx context.Context, rctx Context, diffs Resource
 
 			for arn := range listDiffs.certsToAdd {
 				//one certificate at a time can be added...
-				_, err := client.ELB(ctx, rctx.ProviderName).AddListenerCertificates(ctx, &elbv2.AddListenerCertificatesInput{
+				elbClient2, err := client.ELB(ctx, rctx.ProviderName)
+				if err != nil {
+					return err
+				}
+				_, err = elbClient2.AddListenerCertificates(ctx, &elbv2.AddListenerCertificatesInput{
 					ListenerArn: aws.String(listDiffs.listenerArn),
 					Certificates: []elbv2types.Certificate{{
 						CertificateArn: aws.String(arn),
@@ -584,7 +623,11 @@ func (l LBListener) applyDiffs(ctx context.Context, rctx Context, diffs Resource
 			}).Infof("%v certificates removed from listener", len(listDiffs.certsToDelete))
 
 			for arn := range listDiffs.certsToDelete {
-				_, err := client.ELB(ctx, rctx.ProviderName).RemoveListenerCertificates(ctx, &elbv2.RemoveListenerCertificatesInput{
+				elbClient3, err := client.ELB(ctx, rctx.ProviderName)
+				if err != nil {
+					return err
+				}
+				_, err = elbClient3.RemoveListenerCertificates(ctx, &elbv2.RemoveListenerCertificatesInput{
 					ListenerArn: aws.String(listDiffs.listenerArn),
 					Certificates: []elbv2types.Certificate{{
 						CertificateArn: aws.String(arn),
@@ -597,9 +640,12 @@ func (l LBListener) applyDiffs(ctx context.Context, rctx Context, diffs Resource
 		}
 	}
 
-	elbClient := client.ELB(ctx, rctx.ProviderName)
+	elbClient, err := client.ELB(ctx, rctx.ProviderName)
+	if err != nil {
+		return err
+	}
 
-	_, err := elbClient.ModifyListener(ctx, input)
+	_, err = elbClient.ModifyListener(ctx, input)
 	if err != nil {
 		return errors.Wrap(err, "error updating load balancer listener")
 	}
@@ -608,12 +654,20 @@ func (l LBListener) applyDiffs(ctx context.Context, rctx Context, diffs Resource
 	if listDiffs.tagsDiff {
 		upserts := listDiffs.tagDiff.Upserts()
 		if len(upserts) > 0 {
-			if err := awsw.NewELB(ctx, rctx.ProviderName).AddResourceTags(ctx, listDiffs.listenerArn, upserts); err != nil {
+			elbSvc3, err := awsw.NewELB(ctx, rctx.ProviderName)
+			if err != nil {
+				return err
+			}
+			if err := elbSvc3.AddResourceTags(ctx, listDiffs.listenerArn, upserts); err != nil {
 				return errors.Wrapf(err, "error updating load balancer listener tags for %v", l.Identifier())
 			}
 		}
 		if len(listDiffs.tagDiff.Deleted) > 0 {
-			if err := awsw.NewELB(ctx, rctx.ProviderName).DeleteResourceTags(ctx, listDiffs.listenerArn, listDiffs.tagDiff.Deleted); err != nil {
+			elbSvc4, err := awsw.NewELB(ctx, rctx.ProviderName)
+			if err != nil {
+				return err
+			}
+			if err := elbSvc4.DeleteResourceTags(ctx, listDiffs.listenerArn, listDiffs.tagDiff.Deleted); err != nil {
 				return errors.Wrapf(err, "error deleting load balancer listener tags for %v", l.Identifier())
 			}
 		}
@@ -653,7 +707,11 @@ func addAdditionalCertsToListener(ctx context.Context, rctx Context, listenerArn
 		if err != nil {
 			return errors.Wrap(err, "error creating listener due to missing ssl certificate")
 		}
-		_, err = client.ELB(ctx, rctx.ProviderName).AddListenerCertificates(ctx, &elbv2.AddListenerCertificatesInput{
+		elbClient, elbClientErr := client.ELB(ctx, rctx.ProviderName)
+		if elbClientErr != nil {
+			return elbClientErr
+		}
+		_, err = elbClient.AddListenerCertificates(ctx, &elbv2.AddListenerCertificatesInput{
 			ListenerArn: listenerArn,
 			Certificates: []elbv2types.Certificate{{
 				CertificateArn: aws.String(certArn),
@@ -672,7 +730,11 @@ func addAdditionalCertsToListener(ctx context.Context, rctx Context, listenerArn
 // certificate id, or domain name) against the resource provider's account and region —
 // listener certificates must live in the load balancer's own region.
 func certificateArnByCertificateIDOrDomain(ctx context.Context, rctx Context, certDomainOrID string) (string, error) {
-	arn, err := awsw.NewACM(ctx, rctx.ProviderName).CertificateArnForIdentifier(ctx, certDomainOrID)
+	acmSvc, err := awsw.NewACM(ctx, rctx.ProviderName)
+	if err != nil {
+		return "", err
+	}
+	arn, err := acmSvc.CertificateArnForIdentifier(ctx, certDomainOrID)
 	if err != nil {
 		return "", errors.Wrapf(err, "error resolving certificate %q", certDomainOrID)
 	}

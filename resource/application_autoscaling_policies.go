@@ -280,7 +280,10 @@ func (p *ApplicationAutoScalingPolicy) Apply(ctx context.Context, rctx Context) 
 	}
 
 	var err error
-	aasClient := client.ApplicationAutoScaling(ctx, rctx.ProviderName)
+	aasClient, err := client.ApplicationAutoScaling(ctx, rctx.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	switch p.Type {
 	//target-tracking
@@ -445,7 +448,10 @@ func (p *ApplicationAutoScalingPolicy) Delete(ctx context.Context, rctx Context)
 		return err
 	}
 
-	aasClient := client.ApplicationAutoScaling(ctx, rctx.ProviderName)
+	aasClient, err := client.ApplicationAutoScaling(ctx, rctx.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	switch p.Type {
 	//target-tracking

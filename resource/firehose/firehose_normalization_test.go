@@ -19,7 +19,9 @@ func TestFirehoseNormalization(t *testing.T) {
 			// Leave Bucket and Role empty to avoid lookups
 		}
 
-		s3Config.normalize(ctx, providerName)
+		if err := s3Config.normalize(ctx, providerName); err != nil {
+			t.Fatal(err)
+		}
 
 		// Should be initialized to empty struct
 		assert.NotNil(t, s3Config.CloudWatchLoggingOptions)
@@ -31,7 +33,9 @@ func TestFirehoseNormalization(t *testing.T) {
 	t.Run("Iceberg S3 Configuration EncryptionConfiguration initialization", func(t *testing.T) {
 		s3Config := FirehoseIcebergS3Configuration{}
 
-		s3Config.normalize(ctx, providerName)
+		if err := s3Config.normalize(ctx, providerName); err != nil {
+			t.Fatal(err)
+		}
 
 		// Should be initialized with default NoEncryption
 		assert.NotNil(t, s3Config.EncryptionConfiguration)
@@ -52,7 +56,9 @@ func TestFirehoseNormalization(t *testing.T) {
 			},
 		}
 
-		procConfig.normalize(ctx, providerName, "arn:aws:iam::role:test")
+		if err := procConfig.normalize(ctx, providerName, "arn:aws:iam::role:test"); err != nil {
+			t.Fatal(err)
+		}
 
 		// Should have default parameters added
 		assert.NotNil(t, procConfig.Processors[0].Parameters)
@@ -82,7 +88,9 @@ func TestFirehoseNormalization(t *testing.T) {
 			},
 		}
 
-		procConfig.normalize(ctx, providerName, "arn:aws:iam::role:test")
+		if err := procConfig.normalize(ctx, providerName, "arn:aws:iam::role:test"); err != nil {
+			t.Fatal(err)
+		}
 
 		// Should initialize Parameters and add default values
 		assert.NotNil(t, procConfig.Processors[0].Parameters)
@@ -107,7 +115,9 @@ func TestFirehoseNormalization(t *testing.T) {
 			},
 		}
 
-		procConfig.normalize(ctx, providerName, "arn:aws:iam::role:test")
+		if err := procConfig.normalize(ctx, providerName, "arn:aws:iam::role:test"); err != nil {
+			t.Fatal(err)
+		}
 
 		// Should not override existing parameters
 		assert.Equal(t, procConfig.Processors[0].Parameters["RoleArn"], "arn:aws:iam::role:test")
@@ -126,7 +136,9 @@ func TestFirehoseNormalization(t *testing.T) {
 			Processors: []FirehoseProcessor{}, // Empty processors
 		}
 
-		procConfig.normalize(ctx, providerName, "")
+		if err := procConfig.normalize(ctx, providerName, ""); err != nil {
+			t.Fatal(err)
+		}
 
 		// Should not add parameters if no processors exist
 		assert.Equal(t, len(procConfig.Processors), 0)
@@ -138,7 +150,9 @@ func TestFirehoseNormalization(t *testing.T) {
 			BufferingIntervalSeconds: &zeroSeconds, // Explicitly set to 0
 		}
 
-		s3Config.normalize(ctx, providerName)
+		if err := s3Config.normalize(ctx, providerName); err != nil {
+			t.Fatal(err)
+		}
 
 		// Should be normalized to default value
 		assert.NotNil(t, s3Config.BufferingIntervalSeconds)
@@ -151,7 +165,9 @@ func TestFirehoseNormalization(t *testing.T) {
 			BufferingSizeMBs: &zeroMBs, // Explicitly set to 0
 		}
 
-		s3Config.normalize(ctx, providerName)
+		if err := s3Config.normalize(ctx, providerName); err != nil {
+			t.Fatal(err)
+		}
 
 		// Should be normalized to default value
 		assert.NotNil(t, s3Config.BufferingSizeMBs)

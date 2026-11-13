@@ -9,19 +9,27 @@ import (
 	firehosetypes "github.com/aws/aws-sdk-go-v2/service/firehose/types"
 )
 
-func (d *FirehoseIcebergDestination) normalize(ctx context.Context, providerName string) {
+func (d *FirehoseIcebergDestination) normalize(ctx context.Context, providerName string) error {
 	if d.Role != "" {
-		arn, err := awsw.NewIAM(ctx, providerName).RoleArnForName(ctx, d.Role)
+		iamSvc, err := awsw.NewIAM(ctx, providerName)
 		if err != nil {
-			panic(err)
+			return err
+		}
+		arn, err := iamSvc.RoleArnForName(ctx, d.Role)
+		if err != nil {
+			return err
 		}
 		d.RoleArn = arn
 	}
 
 	if d.CatalogConfiguration.Catalog != "" {
-		arn, err := awsw.NewGlue(ctx, providerName).CatalogArnForIdentifier(ctx, d.CatalogConfiguration.Catalog)
+		glueSvc, err := awsw.NewGlue(ctx, providerName)
 		if err != nil {
-			panic(err)
+			return err
+		}
+		arn, err := glueSvc.CatalogArnForIdentifier(ctx, d.CatalogConfiguration.Catalog)
+		if err != nil {
+			return err
 		}
 		d.CatalogConfiguration.CatalogArn = arn
 	}
@@ -43,10 +51,14 @@ func (d *FirehoseIcebergDestination) normalize(ctx context.Context, providerName
 	}
 
 	// Normalize S3Configuration to ensure buffering values and other defaults are set
-	d.S3Configuration.normalize(ctx, providerName)
+	if err := d.S3Configuration.normalize(ctx, providerName); err != nil {
+		return err
+	}
 
 	if d.ProcessingConfiguration != nil {
-		d.ProcessingConfiguration.normalize(ctx, providerName, aws.ToString(d.RoleArn))
+		if err := d.ProcessingConfiguration.normalize(ctx, providerName, aws.ToString(d.RoleArn)); err != nil {
+			return err
+		}
 	}
 
 	if d.RetryOptions == nil {
@@ -60,7 +72,9 @@ func (d *FirehoseIcebergDestination) normalize(ctx context.Context, providerName
 	}
 
 	if d.S3BackupConfiguration != nil {
-		d.S3BackupConfiguration.normalize(ctx, providerName)
+		if err := d.S3BackupConfiguration.normalize(ctx, providerName); err != nil {
+			return err
+		}
 	}
 
 	if d.AppendOnly == nil {
@@ -78,6 +92,7 @@ func (d *FirehoseIcebergDestination) normalize(ctx context.Context, providerName
 			d.TableCreationConfiguration.Enabled = aws.Bool(false)
 		}
 	}
+	return nil
 }
 
 // validate performs comprehensive validation of Iceberg destination configuration.
@@ -290,19 +305,27 @@ func icebergDestinationFromDescription(desc *firehosetypes.IcebergDestinationDes
 	return dest
 }
 
-func (s *FirehoseIcebergS3Configuration) normalize(ctx context.Context, providerName string) {
+func (s *FirehoseIcebergS3Configuration) normalize(ctx context.Context, providerName string) error {
 	if s.Bucket != "" {
-		arn, err := awsw.NewS3(ctx, providerName).BucketArnForIdentifier(ctx, s.Bucket)
+		s3Svc, err := awsw.NewS3(ctx, providerName)
 		if err != nil {
-			panic(err)
+			return err
+		}
+		arn, err := s3Svc.BucketArnForIdentifier(ctx, s.Bucket)
+		if err != nil {
+			return err
 		}
 		s.BucketArn = arn
 	}
 
 	if s.Role != "" {
-		arn, err := awsw.NewIAM(ctx, providerName).RoleArnForName(ctx, s.Role)
+		iamSvc, err := awsw.NewIAM(ctx, providerName)
 		if err != nil {
-			panic(err)
+			return err
+		}
+		arn, err := iamSvc.RoleArnForName(ctx, s.Role)
+		if err != nil {
+			return err
 		}
 		s.RoleArn = arn
 	}
@@ -334,7 +357,10 @@ func (s *FirehoseIcebergS3Configuration) normalize(ctx context.Context, provider
 	if s.EncryptionConfiguration == nil {
 		s.EncryptionConfiguration = &FirehoseEncryptionConfiguration{}
 	}
-	s.EncryptionConfiguration.normalize(ctx, providerName)
+	if err := s.EncryptionConfiguration.normalize(ctx, providerName); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s FirehoseIcebergS3Configuration) validate() []string {

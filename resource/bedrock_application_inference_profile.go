@@ -33,12 +33,12 @@ var bedrockProfileNameRe = regexp.MustCompile(`^([0-9a-zA-Z][ _-]?)+$`)
 // are immutable -- surface diff messages but skip applying changes to those fields.
 type BedrockApplicationInferenceProfile struct {
 	BaseResource `yaml:",inline"`
-	Name        string            `yaml:"-"`
-	Description string            `yaml:"description"`
-	ModelSource string            `yaml:"modelSource"`
-	Tags        map[string]string `yaml:"tags"`
-	DependsOn   []Key             `yaml:"dependsOn"`
-	GlobalTags  map[string]string `yaml:"-"`
+	Name         string            `yaml:"-"`
+	Description  string            `yaml:"description"`
+	ModelSource  string            `yaml:"modelSource"`
+	Tags         map[string]string `yaml:"tags"`
+	DependsOn    []Key             `yaml:"dependsOn"`
+	GlobalTags   map[string]string `yaml:"-"`
 }
 
 // Key returns the unique key for the resource for this buildit context
@@ -52,11 +52,12 @@ func (r BedrockApplicationInferenceProfile) Identifier() string {
 }
 
 // Normalize sets defaults and merges global tags
-func (r *BedrockApplicationInferenceProfile) Normalize(ctx context.Context) {
+func (r *BedrockApplicationInferenceProfile) Normalize(ctx context.Context) error {
 	if r.Tags == nil {
 		r.Tags = make(map[string]string)
 	}
 	ResourceTags(r.Tags).Merge(r.GlobalTags)
+	return nil
 }
 
 // Validate checks that required fields are present and correctly formatted
@@ -142,7 +143,11 @@ func (r BedrockApplicationInferenceProfile) Destroy(ctx context.Context) error {
 	}
 
 	arn := aws.ToString(existing.InferenceProfileArn)
-	bw := awsw.NewBedrock(ctx, r.Context.ProviderName)
+	bw, err := awsw.NewBedrock(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	if err := bw.DeleteApplicationInferenceProfile(ctx, arn); err != nil {
 		return errors.Wrapf(err, "error deleting bedrock application inference profile %v", r.Identifier())
 	}
@@ -161,7 +166,11 @@ func (r BedrockApplicationInferenceProfile) Destroy(ctx context.Context) error {
 // waitForDeletion polls GetInferenceProfile until the profile returns
 // ResourceNotFoundException, or the bounded deadline is reached.
 func (r BedrockApplicationInferenceProfile) waitForDeletion(ctx context.Context, arn string) error {
-	bw := awsw.NewBedrock(ctx, r.Context.ProviderName)
+	bw, err := awsw.NewBedrock(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	deadline := time.Now().Add(bedrockProfileDestroyWaitTimeout)
 
 	for {
@@ -214,7 +223,11 @@ func (r BedrockApplicationInferenceProfile) Compare(ctx context.Context) (Resour
 
 	var awsTags map[string]string
 	if existing != nil && existing.Status == bedrocktypes.InferenceProfileStatusActive {
-		bw := awsw.NewBedrock(ctx, r.Context.ProviderName)
+		bw, err := awsw.NewBedrock(ctx, r.Context.ProviderName)
+		if err != nil {
+			return nil, err
+		}
+
 		awsTags, err = bw.GetProfileTags(ctx, aws.ToString(existing.InferenceProfileArn))
 		if err != nil {
 			return nil, err
@@ -288,12 +301,19 @@ func (r BedrockApplicationInferenceProfile) computeDiff(ctx context.Context, exi
 
 // fetchExisting fetches the application inference profile if it exists
 func (r BedrockApplicationInferenceProfile) fetchExisting(ctx context.Context) (*bedrocktypes.InferenceProfileSummary, error) {
-	return awsw.NewBedrock(ctx, r.Context.ProviderName).ApplicationInferenceProfileByName(ctx, r.Name)
+	bedrockSvc, err := awsw.NewBedrock(ctx, r.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	return bedrockSvc.ApplicationInferenceProfileByName(ctx, r.Name)
 }
 
 // apply creates a new application inference profile
 func (r BedrockApplicationInferenceProfile) apply(ctx context.Context) error {
-	bw := awsw.NewBedrock(ctx, r.Context.ProviderName)
+	bw, err := awsw.NewBedrock(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	input := &bedrock.CreateInferenceProfileInput{
 		InferenceProfileName: aws.String(r.Name),
@@ -370,7 +390,10 @@ func (r BedrockApplicationInferenceProfile) applyDiffs(ctx context.Context, diff
 		return nil
 	}
 
-	bw := awsw.NewBedrock(ctx, r.Context.ProviderName)
+	bw, err := awsw.NewBedrock(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	if upserts := d.tagDiff.Upserts(); len(upserts) > 0 {
 		if err := bw.TagProfile(ctx, arn, upserts); err != nil {

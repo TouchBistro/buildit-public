@@ -413,21 +413,16 @@ func customRetry(retries int, backoff int) *retry.Standard {
 	})
 }
 
-// mustGetProvider resolves a provider name through Provider or exits with its message.
-func mustGetProvider(name string) providers.CredsProvider {
-	p, err := Provider(name)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return p
-}
-
-// Wrapper functions to returning a service client for default or a named provider
-// By design all of these functions panic in case of downstream errors
+// Service client accessors. Each returns the cached client for the named provider, or an
+// error when the provider is unknown. The retryer comes from the retry values on ctx.
 
 // ACM returns the AWS ACM API client for the main provider.
-func ACM(ctx context.Context, providerName string) *acm.Client {
-	return _acm.Must(mustGetProvider(providerName), func(o *acm.Options) {
+func ACM(ctx context.Context, providerName string) (*acm.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _acm.Client(p, func(o *acm.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
@@ -437,210 +432,330 @@ func ACM(ctx context.Context, providerName string) *acm.Client {
 // configured region. Built per call instead of via _acm.Must because the shared client
 // cache is keyed by provider only — a cached region pin would leak into (or be lost to)
 // the regional ACM accessor above.
-func ACMGlobal(ctx context.Context, providerName string) *acm.Client {
-	return acm.NewFromConfig(mustGetProvider(providerName).Config(), func(o *acm.Options) {
+func ACMGlobal(ctx context.Context, providerName string) (*acm.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return acm.NewFromConfig(p.Config(), func(o *acm.Options) {
 		o.Retryer = retryerFor(ctx)
 		o.Region = "us-east-1"
-	})
+	}), nil
 }
 
 // ApplicationAutoScaling returns an AWS ApplicationAutoScaling API client for the main provider.
-func ApplicationAutoScaling(ctx context.Context, providerName string) *applicationautoscaling.Client {
-	return _applicationautoscaling.Must(mustGetProvider(providerName), func(o *applicationautoscaling.Options) {
+func ApplicationAutoScaling(ctx context.Context, providerName string) (*applicationautoscaling.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _applicationautoscaling.Client(p, func(o *applicationautoscaling.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // Autoscaling returns an AWS Autoscaling API Client for the main provider.
-func Autoscaling(ctx context.Context, providerName string) *autoscaling.Client {
-	return _autoscaling.Must(mustGetProvider(providerName), func(o *autoscaling.Options) {
+func Autoscaling(ctx context.Context, providerName string) (*autoscaling.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _autoscaling.Client(p, func(o *autoscaling.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // Bedrock returns the AWS Bedrock API client for the main provider.
-func Bedrock(ctx context.Context, providerName string) *bedrock.Client {
-	return _bedrock.Must(mustGetProvider(providerName), func(o *bedrock.Options) {
+func Bedrock(ctx context.Context, providerName string) (*bedrock.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _bedrock.Client(p, func(o *bedrock.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // Cloudfront returns the AWS Cloudfront API client for the main provider.
-func Cloudfront(ctx context.Context, providerName string) *cloudfront.Client {
-	return _cloudfront.Must(mustGetProvider(providerName), func(o *cloudfront.Options) {
+func Cloudfront(ctx context.Context, providerName string) (*cloudfront.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _cloudfront.Client(p, func(o *cloudfront.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // CloudWatchLogs returns the AWS CloudWatchLogs API client for the main provider.
-func CloudWatchLogs(ctx context.Context, providerName string) *cloudwatchlogs.Client {
-	return _cloudwatchlogs.Must(mustGetProvider(providerName), func(o *cloudwatchlogs.Options) {
+func CloudWatchLogs(ctx context.Context, providerName string) (*cloudwatchlogs.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _cloudwatchlogs.Client(p, func(o *cloudwatchlogs.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // CloudWatch returns the AWS CloudWatchLogs API client for the main provider.
-func CloudWatch(ctx context.Context, providerName string) *cloudwatch.Client {
-	return _cloudwatch.Must(mustGetProvider(providerName), func(o *cloudwatch.Options) {
+func CloudWatch(ctx context.Context, providerName string) (*cloudwatch.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _cloudwatch.Client(p, func(o *cloudwatch.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // EventBridge returns the AWS EventBridge API client for the main provider.
-func EventBridge(ctx context.Context, providerName string) *eventbridge.Client {
-	return _eventbridge.Must(mustGetProvider(providerName), func(o *eventbridge.Options) {
+func EventBridge(ctx context.Context, providerName string) (*eventbridge.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _eventbridge.Client(p, func(o *eventbridge.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // Firehose returns the AWS Kinesis Data Firehose API client for the main provider.
-func Firehose(ctx context.Context, providerName string) *firehose.Client {
-	return _firehose.Must(mustGetProvider(providerName), func(o *firehose.Options) {
+func Firehose(ctx context.Context, providerName string) (*firehose.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _firehose.Client(p, func(o *firehose.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // Glue returns the AWS Glue API client for the main provider.
-func Glue(ctx context.Context, providerName string) *glue.Client {
-	return _glue.Must(mustGetProvider(providerName), func(o *glue.Options) {
+func Glue(ctx context.Context, providerName string) (*glue.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _glue.Client(p, func(o *glue.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // EC2 returns an AWS EC2 API client for the main provider.
-func EC2(ctx context.Context, providerName string) *ec2.Client {
-	return _ec2.Must(mustGetProvider(providerName), func(o *ec2.Options) {
+func EC2(ctx context.Context, providerName string) (*ec2.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _ec2.Client(p, func(o *ec2.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // ECS returns an AWS ECS API client for the main provider.
-func ECS(ctx context.Context, providerName string) *ecs.Client {
-	return _ecs.Must(mustGetProvider(providerName), func(o *ecs.Options) {
+func ECS(ctx context.Context, providerName string) (*ecs.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _ecs.Client(p, func(o *ecs.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // ELB returns an AWS ELBv2 API client for the main provider.
-func ELB(ctx context.Context, providerName string) *elbv2.Client {
-	return _elasticloadbalancingv2.Must(mustGetProvider(providerName), func(o *elbv2.Options) {
+func ELB(ctx context.Context, providerName string) (*elbv2.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _elasticloadbalancingv2.Client(p, func(o *elbv2.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // IAM returns an AWS IAM API client for the main provider.
-func IAM(ctx context.Context, providerName string) *iam.Client {
-	return _iam.Must(mustGetProvider(providerName), func(o *iam.Options) {
+func IAM(ctx context.Context, providerName string) (*iam.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _iam.Client(p, func(o *iam.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
-func Lambda(ctx context.Context, providerName string) *lambda.Client {
-	return _lambda.Must(mustGetProvider(providerName), func(o *lambda.Options) {
+func Lambda(ctx context.Context, providerName string) (*lambda.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _lambda.Client(p, func(o *lambda.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // RDS returns an AWS RDS API client for the main provider.
-func RDS(ctx context.Context, providerName string) *rds.Client {
-	return _rds.Must(mustGetProvider(providerName), func(o *rds.Options) {
+func RDS(ctx context.Context, providerName string) (*rds.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _rds.Client(p, func(o *rds.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // Route53 returns an AWS Route53 API client
-func Route53(ctx context.Context, providerName string) *route53.Client {
-	return _route53.Must(mustGetProvider(providerName), func(o *route53.Options) {
+func Route53(ctx context.Context, providerName string) (*route53.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _route53.Client(p, func(o *route53.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // S3 returns an AWS S3 API client
-func S3(ctx context.Context, providerName string) *s3.Client {
-	return _s3.Must(mustGetProvider(providerName), func(o *s3.Options) {
+func S3(ctx context.Context, providerName string) (*s3.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _s3.Client(p, func(o *s3.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // ServiceDiscovery returns an AWS ServiceDiscovery API client for the main provider.
-func ServiceDiscovery(ctx context.Context, providerName string) *servicediscovery.Client {
-	return _servicediscovery.Must(mustGetProvider(providerName), func(o *servicediscovery.Options) {
+func ServiceDiscovery(ctx context.Context, providerName string) (*servicediscovery.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _servicediscovery.Client(p, func(o *servicediscovery.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // STS returns an AWS STS API client for the main provider.
-func STS(ctx context.Context, providerName string) *sts.Client {
-	return _sts.Must(mustGetProvider(providerName), func(o *sts.Options) {
+func STS(ctx context.Context, providerName string) (*sts.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _sts.Client(p, func(o *sts.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // SecretsManager returns an AWS SecretsManager API client for the main provider.
-func SecretsManager(ctx context.Context, providerName string) *secretsmanager.Client {
-	return _secretsmanager.Must(mustGetProvider(providerName), func(o *secretsmanager.Options) {
+func SecretsManager(ctx context.Context, providerName string) (*secretsmanager.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _secretsmanager.Client(p, func(o *secretsmanager.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // SFN returns an AWS SFN (state function) API client for the main provider.
-func SFN(ctx context.Context, providerName string) *sfn.Client {
-	return _sfn.Must(mustGetProvider(providerName), func(o *sfn.Options) {
+func SFN(ctx context.Context, providerName string) (*sfn.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _sfn.Client(p, func(o *sfn.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // SQS returns the AWS SQS API client for the main provider.
-func SQS(ctx context.Context, providerName string) *sqs.Client {
-	return _sqs.Must(mustGetProvider(providerName), func(o *sqs.Options) {
+func SQS(ctx context.Context, providerName string) (*sqs.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _sqs.Client(p, func(o *sqs.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // SNS returns the AWS SNS API client for the main provider.
-func SNS(ctx context.Context, providerName string) *sns.Client {
-	return _sns.Must(mustGetProvider(providerName), func(o *sns.Options) {
+func SNS(ctx context.Context, providerName string) (*sns.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _sns.Client(p, func(o *sns.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // SNS returns the AWS SNS API client for the main provider.
-func EFS(ctx context.Context, providerName string) *efs.Client {
-	return _efs.Must(mustGetProvider(providerName), func(o *efs.Options) {
+func EFS(ctx context.Context, providerName string) (*efs.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _efs.Client(p, func(o *efs.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // KMS returns the AWS KMS API client for the supplied provider.
-func KMS(ctx context.Context, providerName string) *kms.Client {
-	return _kms.Must(mustGetProvider(providerName), func(o *kms.Options) {
+func KMS(ctx context.Context, providerName string) (*kms.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _kms.Client(p, func(o *kms.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // MSK returns the AWS MSK API client for the main provider.
-func MSK(ctx context.Context, providerName string) *kafkaconnect.Client {
-	return _kafkaconnect.Must(mustGetProvider(providerName), func(o *kafkaconnect.Options) {
+func MSK(ctx context.Context, providerName string) (*kafkaconnect.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _kafkaconnect.Client(p, func(o *kafkaconnect.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // Kafka returns the AWS MSK API client for the main provider.
-func Kafka(ctx context.Context, providerName string) *kafka.Client {
-	return _kafka.Must(mustGetProvider(providerName), func(o *kafka.Options) {
+func Kafka(ctx context.Context, providerName string) (*kafka.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _kafka.Client(p, func(o *kafka.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
-func ResourceGroupsTaggingAPI(ctx context.Context, providerName string) *resourcegroupstaggingapi.Client {
-	return _resourcegroupstaggingapi.Must(mustGetProvider(providerName), func(o *resourcegroupstaggingapi.Options) {
+func ResourceGroupsTaggingAPI(ctx context.Context, providerName string) (*resourcegroupstaggingapi.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _resourcegroupstaggingapi.Client(p, func(o *resourcegroupstaggingapi.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
 
 // DynamoDB returns the AWS DynamoDB API client for the main provider.
-func DynamoDB(ctx context.Context, providerName string) *dynamodb.Client {
-	return _dynamodb.Must(mustGetProvider(providerName), func(o *dynamodb.Options) {
+func DynamoDB(ctx context.Context, providerName string) (*dynamodb.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _dynamodb.Client(p, func(o *dynamodb.Options) {
 		o.Retryer = retryerFor(ctx)
 	})
 }
@@ -650,8 +765,12 @@ func DynamoDB(ctx context.Context, providerName string) *dynamodb.Client {
 // serves the CLOUDFRONT scope exclusively from us-east-1 regardless of the provider's
 // configured region. A regional WAFv2 use case must add a separate accessor (the client
 // is cached per provider, so the region pin here would leak into it).
-func WAFV2Global(ctx context.Context, providerName string) *wafv2.Client {
-	return _wafv2.Must(mustGetProvider(providerName), func(o *wafv2.Options) {
+func WAFV2Global(ctx context.Context, providerName string) (*wafv2.Client, error) {
+	p, err := Provider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	return _wafv2.Client(p, func(o *wafv2.Options) {
 		o.Retryer = retryerFor(ctx)
 		o.Region = "us-east-1"
 	})

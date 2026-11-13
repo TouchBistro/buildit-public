@@ -53,7 +53,7 @@ func (c CloudfrontFunction) Identifier() string {
 }
 
 // Normalize sets default values and merges global tags.
-func (c *CloudfrontFunction) Normalize(ctx context.Context) {
+func (c *CloudfrontFunction) Normalize(ctx context.Context) error {
 	if c.Runtime == nil {
 		c.Runtime = aws.String(CloudfrontFunctionRuntimeJS20)
 	}
@@ -61,6 +61,7 @@ func (c *CloudfrontFunction) Normalize(ctx context.Context) {
 		c.Tags = make(map[string]string)
 	}
 	ResourceTags(c.Tags).Merge(c.GlobalTags)
+	return nil
 }
 
 // Validate checks the resource configuration against CloudFront API constraints.
@@ -105,7 +106,11 @@ type CloudfrontFunctionDiff struct {
 func (c CloudfrontFunction) Compare(ctx context.Context) (ResourceDiff, error) {
 	log.Debugf("comparing cloudfront function %v", c.Identifier())
 
-	cfClient := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	cfClient, err := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	existing, err := cfClient.FindFunctionByName(ctx, c.Identifier())
 	if err != nil {
 		return nil, err
@@ -200,7 +205,10 @@ func (c CloudfrontFunction) Apply(ctx context.Context) error {
 
 // apply creates and publishes a new function.
 func (c CloudfrontFunction) apply(ctx context.Context) error {
-	cfClient := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	cfClient, err := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	etag, err := cfClient.CreateFunction(ctx, c.Identifier(), c.functionConfig(), []byte(c.Code), c.Tags)
 	if err != nil {
@@ -224,7 +232,10 @@ func (c CloudfrontFunction) applyDiffs(ctx context.Context, diffs ResourceDiff) 
 		return errors.New("invalid diff type supplied")
 	}
 
-	cfClient := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	cfClient, err := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	if fnDiff.tagsDiff {
 		if upserts := fnDiff.tagDiff.Upserts(); len(upserts) > 0 {
@@ -270,7 +281,11 @@ func (c CloudfrontFunction) publishAndWait(ctx context.Context, cfClient awsw.Cl
 func (c CloudfrontFunction) Destroy(ctx context.Context) error {
 	log.Debugf("destroying cloudfront function %v", c.Identifier())
 
-	cfClient := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	cfClient, err := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	existing, err := cfClient.FindFunctionByName(ctx, c.Identifier())
 	if err != nil {
 		return err

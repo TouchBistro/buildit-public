@@ -18,8 +18,12 @@ type IAM struct {
 }
 
 // NewIAM creates a new instance of IAM wrapper
-func NewIAM(ctx context.Context, providerName string) IAM {
-	return IAM{client.IAM(ctx, providerName)}
+func NewIAM(ctx context.Context, providerName string) (IAM, error) {
+	c, err := client.IAM(ctx, providerName)
+	if err != nil {
+		return IAM{}, err
+	}
+	return IAM{c}, nil
 }
 
 // RoleArnForIdentifier resolves an IAM Role ARN from an identifier (ARN or RoleName).
@@ -31,10 +35,12 @@ func (i IAM) RoleArnForIdentifier(ctx context.Context, identifier string) (*stri
 
 	iamService := i
 	if provider != "" {
-		if _, err := client.Provider(provider); err != nil {
-			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
+		var err error
+		iamService, err = NewIAM(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		iamService = NewIAM(ctx, provider)
+
 	}
 
 	// Direct lookup by Role Name
@@ -57,10 +63,12 @@ func (i IAM) PolicyArnForIdentifier(ctx context.Context, identifier string) (*st
 
 	iamService := i
 	if provider != "" {
-		if _, err := client.Provider(provider); err != nil {
-			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
+		var err error
+		iamService, err = NewIAM(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		iamService = NewIAM(ctx, provider)
+
 	}
 
 	// To resolve a policy by name, we need candidate ARNs.
@@ -69,7 +77,11 @@ func (i IAM) PolicyArnForIdentifier(ctx context.Context, identifier string) (*st
 	if stsProvider == "" {
 		stsProvider = client.MainProvider
 	}
-	stsClient := NewSTS(ctx, stsProvider)
+	stsClient, err := NewSTS(ctx, stsProvider)
+	if err != nil {
+		return nil, err
+	}
+
 	accountID, err := stsClient.GetAccountID(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get account ID for policy lookup: %w", err)

@@ -64,7 +64,11 @@ func (u *FunctionUrlConfig) validate() []string {
 
 // apply makes a new function url for the supplied function name
 func (u *FunctionUrlConfig) apply(ctx context.Context, rctx resource.Context, functionName string) error {
-	client := client.Lambda(ctx, rctx.ProviderName)
+	client, err := client.Lambda(ctx, rctx.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	out, err := client.CreateFunctionUrlConfig(ctx, &lambda.CreateFunctionUrlConfigInput{
 		FunctionName: aws.String(functionName),
 		AuthType:     types.FunctionUrlAuthTypeNone, // forced to none
@@ -86,7 +90,11 @@ func (u *FunctionUrlConfig) apply(ctx context.Context, rctx resource.Context, fu
 
 // apply makes a new function url for the supplied function name
 func (u *FunctionUrlConfig) update(ctx context.Context, rctx resource.Context, functionName string) error {
-	client := client.Lambda(ctx, rctx.ProviderName)
+	client, err := client.Lambda(ctx, rctx.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	out, err := client.UpdateFunctionUrlConfig(ctx, &lambda.UpdateFunctionUrlConfigInput{
 		FunctionName: aws.String(functionName),
 		AuthType:     types.FunctionUrlAuthTypeNone, // forced to none
@@ -108,8 +116,12 @@ func (u *FunctionUrlConfig) update(ctx context.Context, rctx resource.Context, f
 
 // destroy this lambda function config for the supplied function name
 func (u *FunctionUrlConfig) destroy(ctx context.Context, rctx resource.Context, functionName string) error {
-	client := client.Lambda(ctx, rctx.ProviderName)
-	_, err := client.DeleteFunctionUrlConfig(ctx, &lambda.DeleteFunctionUrlConfigInput{
+	client, err := client.Lambda(ctx, rctx.ProviderName)
+	if err != nil {
+		return err
+	}
+
+	_, err = client.DeleteFunctionUrlConfig(ctx, &lambda.DeleteFunctionUrlConfigInput{
 		FunctionName: aws.String(functionName),
 		Qualifier:    u.alias,
 	})

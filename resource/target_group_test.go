@@ -39,7 +39,9 @@ func testTargetGroup() LBTargetGroup {
 		Targets:             []string{"10.0.0.1:8080@all", "10.0.0.2:8080@all"},
 		Tags:                map[string]string{"env": "test", "team": "example-team"},
 	}
-	tg.Normalize(context.Background())
+	if err := tg.Normalize(context.Background()); err != nil {
+		panic(err) // fixture helper without t: a bad fixture is a test bug
+	}
 	return tg
 }
 

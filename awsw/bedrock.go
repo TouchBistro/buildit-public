@@ -15,8 +15,12 @@ type Bedrock struct {
 }
 
 // NewBedrock creates a new instance of Bedrock wrapper
-func NewBedrock(ctx context.Context, providerName string) Bedrock {
-	return Bedrock{client.Bedrock(ctx, providerName)}
+func NewBedrock(ctx context.Context, providerName string) (Bedrock, error) {
+	c, err := client.Bedrock(ctx, providerName)
+	if err != nil {
+		return Bedrock{}, err
+	}
+	return Bedrock{c}, nil
 }
 
 // ApplicationInferenceProfileByName paginates list results for application inference profiles

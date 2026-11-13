@@ -18,13 +18,13 @@ const (
 // FirehoseDeliveryStream represents a Kinesis Data Firehose delivery stream backed by an Extended S3 destination.
 type FirehoseDeliveryStream struct {
 	resource.BaseResource `yaml:",inline"`
-	Name               string                         `yaml:"-"`
-	StreamType         string                         `yaml:"type"`
-	Destination        *FirehoseExtendedS3Destination `yaml:"extendedS3Destination"`
-	IcebergDestination *FirehoseIcebergDestination    `yaml:"icebergDestination"`
-	DependsOn          []resource.Key                 `yaml:"dependsOn"`
-	Tags               map[string]string              `yaml:"tags"`
-	GlobalTags         map[string]string              `yaml:"-"`
+	Name                  string                         `yaml:"-"`
+	StreamType            string                         `yaml:"type"`
+	Destination           *FirehoseExtendedS3Destination `yaml:"extendedS3Destination"`
+	IcebergDestination    *FirehoseIcebergDestination    `yaml:"icebergDestination"`
+	DependsOn             []resource.Key                 `yaml:"dependsOn"`
+	Tags                  map[string]string              `yaml:"tags"`
+	GlobalTags            map[string]string              `yaml:"-"`
 
 	deliveryStreamVersionID *string // populated by fetchExisting
 	destinationID           *string // populated by fetchExisting

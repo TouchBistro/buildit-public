@@ -21,7 +21,7 @@ const (
 )
 
 type StandaloneTask struct {
-	BaseResource `yaml:",inline"`
+	BaseResource         `yaml:",inline"`
 	Name                 string                             `yaml:"-"`
 	LaunchType           string                             `yaml:"launchType"`
 	CapacityProviders    []ECSCapacityProviderStrategy      `yaml:"capacityProviders"`
@@ -61,7 +61,7 @@ func (st StandaloneTask) Identifier() string {
 	return st.Name
 }
 
-func (st *StandaloneTask) Normalize(ctx context.Context) {
+func (st *StandaloneTask) Normalize(ctx context.Context) error {
 	st.LaunchType = strings.ToUpper(st.LaunchType)
 	st.NetworkConfiguration.AssignPublicIP = strings.ToUpper(st.NetworkConfiguration.AssignPublicIP)
 	if st.NetworkConfiguration.AssignPublicIP == "" {
@@ -86,6 +86,7 @@ func (st *StandaloneTask) Normalize(ctx context.Context) {
 		st.Tags = make(map[string]string)
 	}
 	ResourceTags(st.Tags).Merge(st.GlobalTags)
+	return nil
 }
 
 func (st StandaloneTask) Validate(ctx context.Context) error {
@@ -219,11 +220,19 @@ func (st StandaloneTask) apply(ctx context.Context) error {
 		//TODO: this can be moved into Validate(ctx context.Context)
 
 		//TODO: @esiddiqui move this to awsw/utils
-		subnetIDs, err := awsw.NewEC2(ctx, st.Context.ProviderName).SubnetIdsByNames(ctx, st.NetworkConfiguration.SubnetNames)
+		ec2Svc, err := awsw.NewEC2(ctx, st.Context.ProviderName)
+		if err != nil {
+			return err
+		}
+		subnetIDs, err := ec2Svc.SubnetIdsByNames(ctx, st.NetworkConfiguration.SubnetNames)
 		if err != nil {
 			return errors.Wrap(err, "error getting subnets IDs from names")
 		}
-		securityGroupIDs, err := awsw.NewEC2(ctx, st.Context.ProviderName).SecurityGroupIdsByNames(ctx, nil, st.NetworkConfiguration.SecurityGroupNames)
+		ec2Svc2, err := awsw.NewEC2(ctx, st.Context.ProviderName)
+		if err != nil {
+			return err
+		}
+		securityGroupIDs, err := ec2Svc2.SecurityGroupIdsByNames(ctx, nil, st.NetworkConfiguration.SecurityGroupNames)
 		if err != nil {
 			return errors.Wrap(err, "error getting security groups IDs from names")
 		}
@@ -288,7 +297,11 @@ func (st StandaloneTask) apply(ctx context.Context) error {
 		launchType = ecstypes.LaunchType(st.LaunchType)
 	}
 
-	ecsClient := client.ECS(ctx, st.Context.ProviderName)
+	ecsClient, err := client.ECS(ctx, st.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	runTaskInput := &ecs.RunTaskInput{
 		Cluster:                  aws.String(st.ClusterName),
 		Count:                    aws.Int32(1),
@@ -412,7 +425,11 @@ func (st StandaloneTask) applyDiffs(ctx context.Context, diffs ResourceDiff) err
 func (st StandaloneTask) fetchExisting(ctx context.Context) ([]ecstypes.Task, error) {
 	entry := log.WithFields(log.Fields{"Identifier": st.Identifier()})
 	entry.Debug("checking if any existing tasks are running")
-	ecsClient := client.ECS(ctx, st.Context.ProviderName)
+	ecsClient, err := client.ECS(ctx, st.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	var taskArns []string
 	var nextToken *string
 	for {
@@ -456,7 +473,10 @@ func (st StandaloneTask) fetchExisting(ctx context.Context) ([]ecstypes.Task, er
 // stop stops all tasks where DESIRED status is not STOPPED already
 func (st StandaloneTask) stop(ctx context.Context, tasks []ecstypes.Task) error {
 	entry := log.WithFields(log.Fields{"Identifier": st.Identifier()})
-	ecsClient := client.ECS(ctx, st.Context.ProviderName)
+	ecsClient, err := client.ECS(ctx, st.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	if len(tasks) == 0 {
 		log.WithFields(log.Fields{

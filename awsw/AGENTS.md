@@ -19,27 +19,32 @@ type ServiceName struct {
     *service.Client
 }
 
-func NewServiceName(ctx context.Context, providerName string) ServiceName {
-    return ServiceName{client.ServiceName(ctx, providerName)}
+func NewServiceName(ctx context.Context, providerName string) (ServiceName, error) {
+    c, err := client.ServiceName(ctx, providerName)
+    if err != nil {
+        return ServiceName{}, err
+    }
+    return ServiceName{c}, nil
 }
 ```
 
 ### Client Access
 
 - Use client package functions: `client.ACM()`, `client.SNS()`, etc.
-- Clients are context-aware and provider-aware:
+- Clients are context-aware and provider-aware. Every accessor returns `(client, error)`; the
+  error is an unknown provider name and is returned, never logged fatally (DEVOPS-8926:
+  buildit is also a library, and a library must not exit its host):
   ```go
-  acmClient := client.ACM(ctx, c.Context.ProviderName)
-  ```
-- Provider names are resolved by `client.Provider(name)`, the only place `main` is mapped to
-  the registered `main` or else `default`. A method that takes an identifier with a
-  `<provider>::` prefix checks the provider with it before building a client for it, so a bad
-  prefix is an error and not a fatal exit:
-  ```go
-  if _, err := client.Provider(provider); err != nil {
-      return nil, errors.Wrapf(err, "provider %q not found", provider)
+  acmClient, err := client.ACM(ctx, c.Context.ProviderName)
+  if err != nil {
+      return err
   }
   ```
+- A method that re-targets another provider from a `<provider>::<name>` identifier does the
+  same with the wrapper constructor and returns its error. Do not pre-check the registry:
+  the constructor already reports the unknown name through `client.Provider`, the one
+  place `main` is mapped to the registered `main` or else `default`.
+- `Normalize` returns an error too, so a lookup there is returned like anywhere else.
 
 ### ARN Resolution (`[Resource]ArnForIdentifier`)
 

@@ -19,8 +19,12 @@ type ECS struct {
 }
 
 // NewECS creates a new instance of ECS wrapper
-func NewECS(ctx context.Context, providerName string) ECS {
-	return ECS{client.ECS(ctx, providerName)}
+func NewECS(ctx context.Context, providerName string) (ECS, error) {
+	c, err := client.ECS(ctx, providerName)
+	if err != nil {
+		return ECS{}, err
+	}
+	return ECS{c}, nil
 }
 
 // ClusterArnForIdentifier resolves an ECS Cluster ARN from an identifier (ARN or Name).
@@ -32,10 +36,12 @@ func (e ECS) ClusterArnForIdentifier(ctx context.Context, identifier string) (*s
 
 	ecsService := e
 	if provider != "" {
-		if _, err := client.Provider(provider); err != nil {
-			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
+		var err error
+		ecsService, err = NewECS(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		ecsService = NewECS(ctx, provider)
+
 	}
 
 	// DescribeClusters accepts both cluster name and ARN.

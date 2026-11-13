@@ -12,7 +12,7 @@ import (
 
 // normalize sets default values for processing configuration, particularly for Lambda transformations.
 // For Lambda processors, it ensures required parameters are set with sensible defaults.
-func (p *FirehoseProcessingConfiguration) normalize(ctx context.Context, providerName string, roleArn string) {
+func (p *FirehoseProcessingConfiguration) normalize(ctx context.Context, providerName string, roleArn string) error {
 	if p.Enabled == nil {
 		p.Enabled = aws.Bool(false)
 	}
@@ -31,9 +31,13 @@ func (p *FirehoseProcessingConfiguration) normalize(ctx context.Context, provide
 		// Resolve RoleArn if it looks like a name (no "arn:aws:iam")
 		if val, exists := p.Processors[i].Parameters["RoleArn"]; exists && val != "" {
 			if !strings.HasPrefix(val, "arn:aws:") {
-				arn, err := awsw.NewIAM(ctx, providerName).RoleArnForName(ctx, val)
+				iamSvc, err := awsw.NewIAM(ctx, providerName)
 				if err != nil {
-					panic(err)
+					return err
+				}
+				arn, err := iamSvc.RoleArnForName(ctx, val)
+				if err != nil {
+					return err
 				}
 				if arn != nil {
 					p.Processors[i].Parameters["RoleArn"] = *arn
@@ -61,6 +65,7 @@ func (p *FirehoseProcessingConfiguration) normalize(ctx context.Context, provide
 			p.Processors[i].Parameters["NumberOfRetries"] = "3" // Default number of retries
 		}
 	}
+	return nil
 }
 
 func (p *FirehoseProcessingConfiguration) validate() []string {

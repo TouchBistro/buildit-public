@@ -70,35 +70,35 @@ type FileSystem struct {
 // Function represents a Function resource
 type Function struct {
 	resource.BaseResource `yaml:",inline"`
-	Name               string                `yaml:"-"`
-	Description        string                `yaml:"description"`
-	Code               Code                  `yaml:"code"`
-	Role               string                `yaml:"role"`
-	Policy             *Policy               `yaml:"policy,omitempty"`
-	Architectures      []string              `yaml:"architectures"` // used by zip/image both
-	Environment        map[string]string     `yaml:"environment"`
-	Secrets            map[string]string     `yaml:"secrets"`
-	EphemeralStorage   *int32                `yaml:"ephemeralStorage,omitempty"` // default:512 MB
-	Memory             *int32                `yaml:"memory,omitempty"`           // default:256 MB
-	Handler            *string               `yaml:"handler,omitempty"`          // zip only
-	Layers             []LayerRef            `yaml:"layers"`                     // zip only
-	PackageType        *string               `yaml:"type"`                       // zip | image (default)
-	ImageOverrides     *LambdaImageOverrides `yaml:"imageOverride,omitempty"`    // image only
-	Publish            *bool                 `yaml:"publish,omitempty"`          // default: false,
-	ForcePublish       *bool                 `yaml:"forcePublish,omitempty"`
-	Runtime            string                `yaml:"runtime"`        // zip only
-	Timeout            *int32                `yaml:"timeoutSeconds"` // default 3s
-	VpcConfig          *VpcConfig            `yaml:"vpc,omitempty"`
-	Aliases            []LambdaAlias         `yaml:"aliases"`
-	FunctionUrl        *FunctionUrlConfig    `yaml:"functionUrl,omitempty"`
-	LogConfig          *LogConfig            `yaml:"logging,omitempty"`
-	FileSystem         *FileSystem           `yaml:"fileSystem"`
-	TerminateRecursion *bool                 `yaml:"terminateRecursion"` // enable recursion protection
-	DependsOn          []resource.Key        `yaml:"dependsOn"`
-	Tags               map[string]string     `yaml:"tags"`
-	GlobalTags         map[string]string     `yaml:"-"`
-	_existingVersions  []string              `yaml:"-"` // read from AWS only
-	_arn               *string               `yaml:"-"` // read from AWS only
+	Name                  string                `yaml:"-"`
+	Description           string                `yaml:"description"`
+	Code                  Code                  `yaml:"code"`
+	Role                  string                `yaml:"role"`
+	Policy                *Policy               `yaml:"policy,omitempty"`
+	Architectures         []string              `yaml:"architectures"` // used by zip/image both
+	Environment           map[string]string     `yaml:"environment"`
+	Secrets               map[string]string     `yaml:"secrets"`
+	EphemeralStorage      *int32                `yaml:"ephemeralStorage,omitempty"` // default:512 MB
+	Memory                *int32                `yaml:"memory,omitempty"`           // default:256 MB
+	Handler               *string               `yaml:"handler,omitempty"`          // zip only
+	Layers                []LayerRef            `yaml:"layers"`                     // zip only
+	PackageType           *string               `yaml:"type"`                       // zip | image (default)
+	ImageOverrides        *LambdaImageOverrides `yaml:"imageOverride,omitempty"`    // image only
+	Publish               *bool                 `yaml:"publish,omitempty"`          // default: false,
+	ForcePublish          *bool                 `yaml:"forcePublish,omitempty"`
+	Runtime               string                `yaml:"runtime"`        // zip only
+	Timeout               *int32                `yaml:"timeoutSeconds"` // default 3s
+	VpcConfig             *VpcConfig            `yaml:"vpc,omitempty"`
+	Aliases               []LambdaAlias         `yaml:"aliases"`
+	FunctionUrl           *FunctionUrlConfig    `yaml:"functionUrl,omitempty"`
+	LogConfig             *LogConfig            `yaml:"logging,omitempty"`
+	FileSystem            *FileSystem           `yaml:"fileSystem"`
+	TerminateRecursion    *bool                 `yaml:"terminateRecursion"` // enable recursion protection
+	DependsOn             []resource.Key        `yaml:"dependsOn"`
+	Tags                  map[string]string     `yaml:"tags"`
+	GlobalTags            map[string]string     `yaml:"-"`
+	_existingVersions     []string              `yaml:"-"` // read from AWS only
+	_arn                  *string               `yaml:"-"` // read from AWS only
 }
 
 // Key returns the unique key for the resource for this buildit context
@@ -112,7 +112,7 @@ func (r Function) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields
-func (r *Function) Normalize(ctx context.Context) {
+func (r *Function) Normalize(ctx context.Context) error {
 
 	// Merge globalTags to security group tags, if key is not already present
 	// later we'll use sg.Tags to add/update tags
@@ -145,8 +145,12 @@ func (r *Function) Normalize(ctx context.Context) {
 
 	// check package code
 	if *r.PackageType == string(types.PackageTypeZip) {
+		s3Svc, err := awsw.NewS3(ctx, r.Context.ProviderName)
+		if err != nil {
+			return err
+		}
 		r.Code._SHA256, r.Code._CodeSize, _ =
-			awsw.NewS3(ctx, r.Context.ProviderName).GetObjectChecksumAndSize(ctx, *r.Code.S3Bucket, *r.Code.Key, r.Code.ObjVersion)
+			s3Svc.GetObjectChecksumAndSize(ctx, *r.Code.S3Bucket, *r.Code.Key, r.Code.ObjVersion)
 	}
 
 	// ephemeral storage
@@ -178,7 +182,11 @@ func (r *Function) Normalize(ctx context.Context) {
 	if len(r.Secrets) > 0 {
 
 		for k, v := range r.Secrets {
-			val, err := awsw.NewSecretsManager(ctx, r.Context.ProviderName).GetValueBySecretId(ctx, v)
+			secretsManagerSvc, err := awsw.NewSecretsManager(ctx, r.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			val, err := secretsManagerSvc.GetValueBySecretId(ctx, v)
 			if err != nil {
 				log.Warnf("error fetching secret value key %v from %v", k, v)
 			}
@@ -233,9 +241,12 @@ func (r *Function) Normalize(ctx context.Context) {
 
 	// layer ref
 	for n, ly := range r.Layers {
-		ly.Normalize(ctx, r.Context)
+		if err := ly.Normalize(ctx, r.Context); err != nil {
+			return err
+		}
 		r.Layers[n] = ly
 	}
+	return nil
 }
 
 // Validate the lambda function input
@@ -392,7 +403,10 @@ func (r Function) Destroy(ctx context.Context) error {
 		return nil
 	}
 
-	client := client.Lambda(ctx, r.Context.ProviderName)
+	client, err := client.Lambda(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	// list aliases for this function
 	out, err := client.ListAliases(ctx, &lambda.ListAliasesInput{
@@ -486,7 +500,11 @@ func (r Function) resolveFileSystemArn(ctx context.Context) error {
 	if r.FileSystem == nil || r.FileSystem.Arn != nil {
 		return nil
 	}
-	arn, err := awsw.NewEFS(ctx, r.Context.ProviderName).AccessPointArnForIdentifier(ctx, r.FileSystem.Name)
+	efsSvc, err := awsw.NewEFS(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+	arn, err := efsSvc.AccessPointArnForIdentifier(ctx, r.FileSystem.Name)
 	if err != nil {
 		return errors.Wrapf(err, "error resolving fileSystem access point %v for lambda function %v", r.FileSystem.Name, r.Identifier())
 	}
@@ -809,7 +827,10 @@ func (r Function) Compare(ctx context.Context) (resource.ResourceDiff, error) {
 // fetchExisting fetches lambda function if exists
 func (r Function) fetchExisting(ctx context.Context) (*Function, error) {
 
-	client := client.Lambda(ctx, r.Context.ProviderName)
+	client, err := client.Lambda(ctx, r.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
 
 	// fetch the lambda func
 	out, err := client.GetFunction(ctx, &lambda.GetFunctionInput{
@@ -887,17 +908,29 @@ func (r Function) fetchExisting(ctx context.Context) (*Function, error) {
 	var vpcConfig *VpcConfig
 	if oCfg.VpcConfig != nil {
 		vpcId := *oCfg.VpcConfig.VpcId
-		vpcName, err := awsw.NewEC2(ctx, r.Context.ProviderName).VpcNameById(ctx, vpcId)
+		ec2Svc, err := awsw.NewEC2(ctx, r.Context.ProviderName)
+		if err != nil {
+			return nil, err
+		}
+		vpcName, err := ec2Svc.VpcNameById(ctx, vpcId)
 		if err != nil {
 			return nil, errors.Wrapf(err, "error fetching vpc name for id %v", vpcId)
 		}
 
-		sgNames, err := awsw.NewEC2(ctx, r.Context.ProviderName).SecurityGroupNamesByIds(ctx, vpcName, oCfg.VpcConfig.SecurityGroupIds)
+		ec2Svc2, err := awsw.NewEC2(ctx, r.Context.ProviderName)
+		if err != nil {
+			return nil, err
+		}
+		sgNames, err := ec2Svc2.SecurityGroupNamesByIds(ctx, vpcName, oCfg.VpcConfig.SecurityGroupIds)
 		if err != nil {
 			return nil, errors.Wrapf(err, "error fetching security group names")
 		}
 
-		subnetNames, err := awsw.NewEC2(ctx, r.Context.ProviderName).SubnetNamesByIds(ctx, oCfg.VpcConfig.SubnetIds)
+		ec2Svc3, err := awsw.NewEC2(ctx, r.Context.ProviderName)
+		if err != nil {
+			return nil, err
+		}
+		subnetNames, err := ec2Svc3.SubnetNamesByIds(ctx, oCfg.VpcConfig.SubnetIds)
 		if err != nil {
 			return nil, errors.Wrapf(err, "erro fetching subnet names")
 		}
@@ -913,7 +946,11 @@ func (r Function) fetchExisting(ctx context.Context) (*Function, error) {
 	// beware: this call to RoleNameForArn is slow like anything.
 	// for some odd reason AWS doesn't have a civilized way of fetching
 	// a role by its arn. you have to loop through all roles
-	roleName, err := awsw.NewIAM(ctx, r.Context.ProviderName).RoleNameForArn(ctx, *oCfg.Role)
+	iamSvc, err := awsw.NewIAM(ctx, r.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	roleName, err := iamSvc.RoleNameForArn(ctx, *oCfg.Role)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error fetching role name for role arn")
 	}
@@ -1084,7 +1121,11 @@ func (r Function) apply(ctx context.Context) error {
 		code.S3ObjectVersion = r.Code.ObjVersion
 	}
 
-	roleArn, err := awsw.NewIAM(ctx, r.Context.ProviderName).RoleArnForName(ctx, r.Role)
+	iamSvc, err := awsw.NewIAM(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+	roleArn, err := iamSvc.RoleArnForName(ctx, r.Role)
 	if err != nil {
 		return err
 	}
@@ -1114,12 +1155,20 @@ func (r Function) apply(ctx context.Context) error {
 	var vpcConfig *types.VpcConfig
 	if r.VpcConfig != nil {
 
-		groups, err := awsw.NewEC2(ctx, r.Context.ProviderName).SecurityGroupIdsByNames(ctx, nil, r.VpcConfig.SecurityGroups)
+		ec2Svc, err := awsw.NewEC2(ctx, r.Context.ProviderName)
+		if err != nil {
+			return err
+		}
+		groups, err := ec2Svc.SecurityGroupIdsByNames(ctx, nil, r.VpcConfig.SecurityGroups)
 		if err != nil {
 			return err
 		}
 
-		subnets, err := awsw.NewEC2(ctx, r.Context.ProviderName).SubnetIdsByNames(ctx, r.VpcConfig.Subnets)
+		ec2Svc2, err := awsw.NewEC2(ctx, r.Context.ProviderName)
+		if err != nil {
+			return err
+		}
+		subnets, err := ec2Svc2.SubnetIdsByNames(ctx, r.VpcConfig.Subnets)
 		if err != nil {
 			return err
 		}
@@ -1172,7 +1221,11 @@ func (r Function) apply(ctx context.Context) error {
 		Tags:              r.Tags,
 	}
 
-	client := client.Lambda(ctx, r.Context.ProviderName)
+	client, err := client.Lambda(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	out, err := client.CreateFunction(ctx, input)
 	if err != nil {
 		return errors.Wrapf(err, "error creating lambda function %v", r.Identifier())
@@ -1265,7 +1318,10 @@ func (r Function) applyDiffs(ctx context.Context, diffs resource.ResourceDiff) e
 	}
 
 	var err error
-	client := client.Lambda(ctx, r.Context.ProviderName)
+	client, err := client.Lambda(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	// fetch the highestPublishedVersion currently
 	// this may change if the resource is updated
@@ -1303,7 +1359,12 @@ func (r Function) applyDiffs(ctx context.Context, diffs resource.ResourceDiff) e
 	var roleArn *string
 	if lamDiffs.roleDiff {
 		configDiffsFound = true
-		roleArn, err = awsw.NewIAM(ctx, r.Context.ProviderName).RoleArnForName(ctx, r.Role)
+		var iamSvc awsw.IAM
+		iamSvc, err = awsw.NewIAM(ctx, r.Context.ProviderName)
+		if err != nil {
+			return err
+		}
+		roleArn, err = iamSvc.RoleArnForName(ctx, r.Role)
 		if err != nil {
 			return err
 		}
@@ -1389,12 +1450,20 @@ func (r Function) applyDiffs(ctx context.Context, diffs resource.ResourceDiff) e
 		configDiffsFound = true
 		if r.VpcConfig != nil {
 
-			groups, err := awsw.NewEC2(ctx, r.Context.ProviderName).SecurityGroupIdsByNames(ctx, nil, r.VpcConfig.SecurityGroups)
+			ec2Svc, err := awsw.NewEC2(ctx, r.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			groups, err := ec2Svc.SecurityGroupIdsByNames(ctx, nil, r.VpcConfig.SecurityGroups)
 			if err != nil {
 				return err
 			}
 
-			subnets, err := awsw.NewEC2(ctx, r.Context.ProviderName).SubnetIdsByNames(ctx, r.VpcConfig.Subnets)
+			ec2Svc2, err := awsw.NewEC2(ctx, r.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			subnets, err := ec2Svc2.SubnetIdsByNames(ctx, r.VpcConfig.Subnets)
 			if err != nil {
 				return err
 			}
@@ -1493,14 +1562,24 @@ func (r Function) applyDiffs(ctx context.Context, diffs resource.ResourceDiff) e
 	if lamDiffs.tagsDiff {
 		upserts := lamDiffs.tagDiff.Upserts()
 		if len(upserts) > 0 {
-			err = awsw.NewLambda(ctx, r.Context.ProviderName).AddResourceTags(ctx, *existing._arn, upserts)
+			var lambdaSvc awsw.Lambda
+			lambdaSvc, err = awsw.NewLambda(ctx, r.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			err = lambdaSvc.AddResourceTags(ctx, *existing._arn, upserts)
 			if err != nil {
 				return err
 			}
 		}
 
 		if len(lamDiffs.tagDiff.Deleted) > 0 {
-			err = awsw.NewLambda(ctx, r.Context.ProviderName).DeleteResourceTags(ctx, *existing._arn, lamDiffs.tagDiff.Deleted)
+			var lambdaSvc2 awsw.Lambda
+			lambdaSvc2, err = awsw.NewLambda(ctx, r.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			err = lambdaSvc2.DeleteResourceTags(ctx, *existing._arn, lamDiffs.tagDiff.Deleted)
 			if err != nil {
 				return err
 			}
@@ -1629,14 +1708,17 @@ func (r Function) applyDiffs(ctx context.Context, diffs resource.ResourceDiff) e
 // waitForUpdate waits 15s for 15 retries for lambda function to reach ACTIVE state
 func (r Function) waitForUpdate(ctx context.Context) error {
 	log.Info("waiting for lambda function updates before continuing...")
-	client := client.Lambda(ctx, r.Context.ProviderName)
+	client, err := client.Lambda(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	waiter := lambda.NewFunctionUpdatedV2Waiter(client, func(f *lambda.FunctionUpdatedV2WaiterOptions) {
 		f.MinDelay = time.Second * time.Duration(3)  // 3s
 		f.MaxDelay = time.Second * time.Duration(15) // 15s
 	})
 
-	_, err := waiter.WaitForOutput(ctx, &lambda.GetFunctionInput{
+	_, err = waiter.WaitForOutput(ctx, &lambda.GetFunctionInput{
 		FunctionName: aws.String(r.Identifier())},
 		1*time.Minute)
 
@@ -1673,7 +1755,11 @@ func (r Function) toLayerArnSlice(ctx context.Context) ([]string, error) {
 // createAlias creates the specified aliaes
 func (r Function) createAliases(ctx context.Context, aliases []LambdaAlias, highestPublishedVersion string) error {
 
-	client := client.Lambda(ctx, r.Context.ProviderName)
+	client, err := client.Lambda(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	for _, alias := range aliases {
 
 		ver := alias.Version
@@ -1721,7 +1807,11 @@ func (r Function) createAliases(ctx context.Context, aliases []LambdaAlias, high
 // updateAliases updates the alias from the supplied map[LambdaAlias]LambdaAliasDiff for this lambda function
 func (r Function) updateAliases(ctx context.Context, aliases map[LambdaAlias]LambdaAliasDiff, highestPublishedVersion string) error {
 
-	client := client.Lambda(ctx, r.Context.ProviderName)
+	client, err := client.Lambda(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	for alias, diff := range aliases {
 
 		// update alias
@@ -1811,7 +1901,10 @@ func (r Function) updateAliases(ctx context.Context, aliases map[LambdaAlias]Lam
 // deleteAliases delete the supplied alias names for this lambda function
 func (r Function) deleteAliases(ctx context.Context, aliases []LambdaAlias) error {
 
-	client := client.Lambda(ctx, r.Context.ProviderName)
+	client, err := client.Lambda(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	for _, alias := range aliases {
 
@@ -1842,7 +1935,11 @@ func (r Function) deleteAliases(ctx context.Context, aliases []LambdaAlias) erro
 // fetch lambda policy from Aws, for a function, alias or version
 func (r Function) fetchLambdaPolicy(ctx context.Context, qualifier *string) (*Policy, error) {
 
-	client := client.Lambda(ctx, r.Context.ProviderName)
+	client, err := client.Lambda(ctx, r.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	outp, err := client.GetPolicy(ctx, &lambda.GetPolicyInput{
 		FunctionName: aws.String(r.Identifier()),
 		Qualifier:    qualifier,
@@ -1872,7 +1969,10 @@ func (r Function) listVersions(ctx context.Context) ([]string, error) {
 	var done bool
 	var versions []string
 
-	client := client.Lambda(ctx, r.Context.ProviderName)
+	client, err := client.Lambda(ctx, r.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
 
 	for !done {
 		out, err := client.ListVersionsByFunction(ctx, &lambda.ListVersionsByFunctionInput{

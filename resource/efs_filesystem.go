@@ -55,7 +55,7 @@ func efsPollUntilDeleted(ctx context.Context, resource string, check func(contex
 // FileSystemId, a creation-time value, so they are managed as nested lists here rather than as
 // standalone resources. The file system resolves its id once and reconciles each child against it.
 type EFSFileSystem struct {
-	BaseResource `yaml:",inline"`
+	BaseResource               `yaml:",inline"`
 	Name                       string                `yaml:"-"`
 	Encrypted                  *bool                 `yaml:"encrypted"`
 	KmsKeyId                   *string               `yaml:"kmsKeyId,omitempty"`
@@ -90,7 +90,7 @@ func (r EFSFileSystem) Identifier() string {
 }
 
 // Normalize sets defaults and sanitizes fields.
-func (r *EFSFileSystem) Normalize(ctx context.Context) {
+func (r *EFSFileSystem) Normalize(ctx context.Context) error {
 	if r.Encrypted == nil {
 		// Secure by default: EFS encryption is immutable, so default it on at create time.
 		r.Encrypted = aws.Bool(true)
@@ -133,11 +133,16 @@ func (r *EFSFileSystem) Normalize(ctx context.Context) {
 	// the user sets one under `tags`.
 
 	for _, mt := range r.MountTargets {
-		mt.Normalize(ctx)
+		if err := mt.Normalize(ctx); err != nil {
+			return err
+		}
 	}
 	for _, ap := range r.AccessPoints {
-		ap.Normalize(ctx, InheritedTags(r.GlobalTags))
+		if err := ap.Normalize(ctx, InheritedTags(r.GlobalTags)); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // Validate checks the file system input.
@@ -239,7 +244,10 @@ func (r EFSFileSystem) Validate(ctx context.Context) error {
 func (r EFSFileSystem) Apply(ctx context.Context) error {
 	log.Debugf("applying efs filesystem %v", r.Identifier())
 
-	efsClient := awsw.NewEFS(ctx, r.Context.ProviderName)
+	efsClient, err := awsw.NewEFS(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	existing, err := r.fetchExisting(ctx)
 	if err != nil {
@@ -279,7 +287,10 @@ func (r EFSFileSystem) Apply(ctx context.Context) error {
 }
 
 func (r EFSFileSystem) apply(ctx context.Context) error {
-	efsClient := awsw.NewEFS(ctx, r.Context.ProviderName)
+	efsClient, err := awsw.NewEFS(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	in := &efs.CreateFileSystemInput{
 		CreationToken:   aws.String(r.Name),
@@ -328,7 +339,11 @@ func (r EFSFileSystem) apply(ctx context.Context) error {
 // createChildren provisions all desired mount targets and access points for a freshly created file
 // system. There is nothing to update or prune, so each child is created directly.
 func (r EFSFileSystem) createChildren(ctx context.Context, efsClient awsw.EFS, fsID string) error {
-	ec2Client := awsw.NewEC2(ctx, r.Context.ProviderName)
+	ec2Client, err := awsw.NewEC2(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	for _, mt := range r.MountTargets {
 		if err := mt.create(ctx, efsClient, ec2Client, fsID); err != nil {
 			return errors.Wrapf(err, "error creating mount target for efs filesystem %v", r.Identifier())
@@ -357,7 +372,11 @@ func (r EFSFileSystem) applyMountTargetDiffs(ctx context.Context, efsClient awsw
 			return errors.Wrapf(err, "error updating mount target for efs filesystem %v", r.Identifier())
 		}
 	}
-	ec2Client := awsw.NewEC2(ctx, r.Context.ProviderName)
+	ec2Client, err := awsw.NewEC2(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	for _, mt := range d.mountTargetsToAdd {
 		if err := mt.create(ctx, efsClient, ec2Client, fsID); err != nil {
 			return errors.Wrapf(err, "error adding mount target for efs filesystem %v", r.Identifier())
@@ -405,7 +424,10 @@ func (r EFSFileSystem) applyDiffs(ctx context.Context, diffs ResourceDiff) error
 		return errors.Errorf("cannot retrieve existing efs filesystem")
 	}
 	fsID := aws.ToString(existing.FileSystemId)
-	efsClient := awsw.NewEFS(ctx, r.Context.ProviderName)
+	efsClient, err := awsw.NewEFS(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	if d.encryptedDiff {
 		log.WithField("Name", r.Identifier()).Warn("efs filesystem encrypted is immutable; destroy & recreate to change")
@@ -493,7 +515,10 @@ func (r EFSFileSystem) Destroy(ctx context.Context) error {
 	}
 
 	fsID := aws.ToString(existing.FileSystemId)
-	efsClient := awsw.NewEFS(ctx, r.Context.ProviderName)
+	efsClient, err := awsw.NewEFS(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	// A file system cannot be deleted while it still has mount targets or access points. Both sets
 	// are torn down best-effort: every child is issued a delete before we return, so one transient
@@ -622,7 +647,11 @@ func (r EFSFileSystem) Compare(ctx context.Context) (ResourceDiff, error) {
 		return diffs, nil
 	}
 
-	efsClient := awsw.NewEFS(ctx, r.Context.ProviderName)
+	efsClient, err := awsw.NewEFS(ctx, r.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	return r.compareExisting(ctx, efsClient, existing)
 }
 
@@ -684,7 +713,10 @@ func (r EFSFileSystem) compareExisting(ctx context.Context, efsClient awsw.EFS, 
 // into add / update / delete, recording the result on diffs. The subnet and IP address are
 // immutable, so an existing mount target can only differ in its security groups.
 func (r EFSFileSystem) compareMountTargets(ctx context.Context, efsClient awsw.EFS, fsID string, diffs *EFSFileSystemDiff) error {
-	ec2Client := awsw.NewEC2(ctx, r.Context.ProviderName)
+	ec2Client, err := awsw.NewEC2(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	existing, err := efsClient.MountTargetsForFileSystem(ctx, fsID)
 	if err != nil {
@@ -892,7 +924,11 @@ func (r EFSFileSystem) resolveKmsArn(ctx context.Context) (string, error) {
 	if r.KmsKeyId == nil {
 		return "", nil
 	}
-	kmsClient := awsw.NewKMS(ctx, r.Context.ProviderName)
+	kmsClient, err := awsw.NewKMS(ctx, r.Context.ProviderName)
+	if err != nil {
+		return "", err
+	}
+
 	arn, err := kmsClient.ResolveKeyArn(ctx, aws.ToString(r.KmsKeyId))
 	if err != nil {
 		return "", errors.Wrapf(err, "error resolving kmsKeyId for efs filesystem %v", r.Identifier())
@@ -987,7 +1023,11 @@ func (r EFSFileSystem) computeDiff(
 // CreationToken is the buildit resource name (set at create time), so this also adopts a
 // pre-existing file system whose resource name is set to its CreationToken.
 func (r EFSFileSystem) fetchExisting(ctx context.Context) (*types.FileSystemDescription, error) {
-	efsClient := awsw.NewEFS(ctx, r.Context.ProviderName)
+	efsClient, err := awsw.NewEFS(ctx, r.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	return efsClient.FileSystemByCreationToken(ctx, r.Name)
 }
 

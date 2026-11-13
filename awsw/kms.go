@@ -14,8 +14,12 @@ type KMS struct {
 }
 
 // NewKMS creates a new instance of the KMS wrapper.
-func NewKMS(ctx context.Context, providerName string) KMS {
-	return KMS{client.KMS(ctx, providerName)}
+func NewKMS(ctx context.Context, providerName string) (KMS, error) {
+	c, err := client.KMS(ctx, providerName)
+	if err != nil {
+		return KMS{}, err
+	}
+	return KMS{c}, nil
 }
 
 // ResolveKeyArn resolves a KMS key reference (alias, key id, or ARN) to its canonical key ARN.

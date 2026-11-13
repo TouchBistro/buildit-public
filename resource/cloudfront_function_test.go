@@ -22,7 +22,9 @@ func testFn() *CloudfrontFunction {
 		Comment: aws.String("test function"),
 		Code:    testFnCode,
 	}
-	r.Normalize(context.Background())
+	if err := r.Normalize(context.Background()); err != nil {
+		panic(err) // fixture helper, no *testing.T in scope
+	}
 	return r
 }
 
@@ -43,13 +45,13 @@ func existingFn() *awsw.ExistingFunction {
 func TestCloudfrontFunction_Normalize(t *testing.T) {
 	t.Run("defaults runtime to cloudfront-js-2.0", func(t *testing.T) {
 		r := &CloudfrontFunction{Name: "fn", Code: testFnCode}
-		r.Normalize(context.Background())
+		require.NoError(t, r.Normalize(context.Background()))
 		assert.Equal(t, CloudfrontFunctionRuntimeJS20, aws.ToString(r.Runtime))
 	})
 
 	t.Run("preserves explicit runtime", func(t *testing.T) {
 		r := &CloudfrontFunction{Name: "fn", Code: testFnCode, Runtime: aws.String(CloudfrontFunctionRuntimeJS10)}
-		r.Normalize(context.Background())
+		require.NoError(t, r.Normalize(context.Background()))
 		assert.Equal(t, CloudfrontFunctionRuntimeJS10, aws.ToString(r.Runtime))
 	})
 
@@ -59,14 +61,14 @@ func TestCloudfrontFunction_Normalize(t *testing.T) {
 			Tags:       map[string]string{"team": "example-team"},
 			GlobalTags: map[string]string{"team": "global-team", "env": "example"},
 		}
-		r.Normalize(context.Background())
+		require.NoError(t, r.Normalize(context.Background()))
 		assert.Equal(t, "example-team", r.Tags["team"])
 		assert.Equal(t, "example", r.Tags["env"])
 	})
 
 	t.Run("nil tags map is initialized", func(t *testing.T) {
 		r := &CloudfrontFunction{Name: "fn", Code: testFnCode, GlobalTags: map[string]string{"env": "example"}}
-		r.Normalize(context.Background())
+		require.NoError(t, r.Normalize(context.Background()))
 		assert.Equal(t, "example", r.Tags["env"])
 	})
 }
@@ -259,6 +261,6 @@ my-fn:
 	assert.Contains(t, r.Code, "return event.request;")
 
 	r.Name = "my-fn"
-	r.Normalize(context.Background())
+	require.NoError(t, r.Normalize(context.Background()))
 	assert.NoError(t, r.Validate(context.Background()))
 }

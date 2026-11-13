@@ -9,19 +9,27 @@ import (
 	firehosetypes "github.com/aws/aws-sdk-go-v2/service/firehose/types"
 )
 
-func (d *FirehoseExtendedS3Destination) normalize(ctx context.Context, providerName string) {
+func (d *FirehoseExtendedS3Destination) normalize(ctx context.Context, providerName string) error {
 	if d.Bucket != "" {
-		arn, err := awsw.NewS3(ctx, providerName).BucketArnFromName(ctx, d.Bucket)
+		s3Svc, err := awsw.NewS3(ctx, providerName)
 		if err != nil {
-			panic(err)
+			return err
+		}
+		arn, err := s3Svc.BucketArnFromName(ctx, d.Bucket)
+		if err != nil {
+			return err
 		}
 		d.BucketArn = arn
 	}
 
 	if d.Role != "" {
-		arn, err := awsw.NewIAM(ctx, providerName).RoleArnForName(ctx, d.Role)
+		iamSvc, err := awsw.NewIAM(ctx, providerName)
 		if err != nil {
-			panic(err)
+			return err
+		}
+		arn, err := iamSvc.RoleArnForName(ctx, d.Role)
+		if err != nil {
+			return err
 		}
 		d.RoleArn = arn
 	}
@@ -51,7 +59,9 @@ func (d *FirehoseExtendedS3Destination) normalize(ctx context.Context, providerN
 	}
 
 	if d.ProcessingConfiguration != nil {
-		d.ProcessingConfiguration.normalize(ctx, providerName, aws.ToString(d.RoleArn))
+		if err := d.ProcessingConfiguration.normalize(ctx, providerName, aws.ToString(d.RoleArn)); err != nil {
+			return err
+		}
 	}
 
 	if d.EncryptionConfiguration == nil {
@@ -59,8 +69,11 @@ func (d *FirehoseExtendedS3Destination) normalize(ctx context.Context, providerN
 			Type: string(firehosetypes.NoEncryptionConfigNoEncryption),
 		}
 	} else {
-		d.EncryptionConfiguration.normalize(ctx, providerName)
+		if err := d.EncryptionConfiguration.normalize(ctx, providerName); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func (d FirehoseExtendedS3Destination) validate() []string {

@@ -187,7 +187,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("bedrock-application-inference-profile", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing bedrock-application-inference-profile %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("bedrock-application-inference-profile", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -206,7 +209,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("certificate", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing certificate %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("certificate", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -225,7 +231,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("cloudfront-distribution", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing cloudfront-distribution %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("cloudfront-distribution", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -244,7 +253,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("cloudfront-vpc-origin", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing cloudfront-vpc-origin %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("cloudfront-vpc-origin", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -263,7 +275,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("cloudfront-function", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing cloudfront-function %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("cloudfront-function", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -282,7 +297,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("cloudwatch-loggroup", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing cloudwatch-loggroup %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("cloudwatch-loggroup", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -301,7 +319,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("cloudwatch-metricalarm", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing cloudwatch-metricalarm %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("cloudwatch-metricalarm", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -321,7 +342,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing cloudwatch-metricalarm %q", n))
+				continue
+			}
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
 				continue
@@ -339,7 +363,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("dynamodb-table", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing dynamodb-table %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("dynamodb-table", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -358,7 +385,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("ecs-service", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing ecs-service %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("ecs-service", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -380,7 +410,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 				addErr(checkReservedTags("efs-filesystem", fmt.Sprintf("%v: accessPoints[%d]", n, idx), ap.Tags))
 			}
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing efs-filesystem %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("efs-filesystem", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -401,7 +434,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing efs-filesystem %q", n))
+				continue
+			}
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
 				continue
@@ -422,7 +458,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 				addErr(checkReservedTags("eventbridge-rule", fmt.Sprintf("%v: targets[%d]", n, idx), t.Tags))
 			}
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing eventbridge-rule %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("eventbridge-rule", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -446,7 +485,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing eventbridge-rule %q", n))
+				continue
+			}
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
 				continue
@@ -464,7 +506,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("firehose-delivery-stream", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing firehose-delivery-stream %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("firehose-delivery-stream", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -484,7 +529,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("iam-policy", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing iam-policy %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("iam-policy", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -504,7 +552,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("iam-role", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing iam-role %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("iam-role", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -524,7 +575,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("lambda-function", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing lambda-function %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("lambda-function", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -548,7 +602,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing lambda-function %q", n))
+				continue
+			}
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
 				continue
@@ -566,7 +623,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("lb-targetgroup", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing lb-targetgroup %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("lb-targetgroup", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -585,7 +645,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("load-balancer", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing load-balancer %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("load-balancer", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -604,7 +667,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("msk-connector", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing msk-connector %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("msk-connector", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -623,7 +689,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("msk-plugin", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing msk-plugin %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("msk-plugin", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -642,7 +711,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("msk-worker-configuration", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing msk-worker-configuration %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("msk-worker-configuration", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -681,7 +753,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 
 			r.Name = *eId
 			r.Context.ProviderName = *ePr
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing msk-worker-configuration %q", n))
+				continue
+			}
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
 				continue
@@ -699,7 +774,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("s3-bucket", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing s3-bucket %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("s3-bucket", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -718,7 +796,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("sd-service", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing sd-service %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("sd-service", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -738,7 +819,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("security-group", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing security-group %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("security-group", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -766,7 +850,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("sqs-queue", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing sqs-queue %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("sqs-queue", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -787,7 +874,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 				validationErrs = append(validationErrs, err)
 				continue
 			}
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing sqs-queue %q", n))
+				continue
+			}
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
 				continue
@@ -805,7 +895,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("standalone-task", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing standalone-task %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("standalone-task", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -824,7 +917,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("state-machine", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing state-machine %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("state-machine", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -843,7 +939,10 @@ func (i *Config) buildGraph(ctx context.Context) error {
 			r.Context.ProviderName = *ePr
 			addErr(checkReservedTags("taskdef", n, r.Tags))
 			r.GlobalTags = i.tagsFor(*eId)
-			r.Normalize(ctx)
+			if err := r.Normalize(ctx); err != nil {
+				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing taskdef %q", n))
+				continue
+			}
 			addErr(checkBuilditTagsApplied("taskdef", n, r.Tags))
 			if err := r.Validate(ctx); err != nil {
 				validationErrs = append(validationErrs, err)
@@ -1154,7 +1253,10 @@ func (i *Config) overrideSecurityGroups(ctx context.Context, addErr func(error))
 						o_sg.Name = *eId
 						o_sg.Context.ProviderName = *ePr
 						o_sg.GlobalTags = i.tagsFor(*eId)
-						o_sg.Normalize(ctx)
+						if err := o_sg.Normalize(ctx); err != nil {
+							addErr(errors.Wrapf(err, "failed normalizing security-group %q", securityGroupPattern))
+							continue
+						}
 						addErr(checkBuilditTagsApplied("security-group", securityGroupPattern, o_sg.Tags))
 						if err := o_sg.Validate(ctx); err != nil {
 							addErr(err)

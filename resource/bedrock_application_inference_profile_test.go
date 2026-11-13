@@ -142,7 +142,9 @@ func TestBedrockApplicationInferenceProfile_Normalize_MergesGlobalTags(t *testin
 		Tags:        map[string]string{"team": "platform"},
 		GlobalTags:  map[string]string{"env": "prod", "team": "shared"},
 	}
-	p.Normalize(ctx)
+	if err := p.Normalize(ctx); err != nil {
+		t.Fatal(err)
+	}
 
 	// existing tag preserved, missing global tag added
 	assert.Equal(t, "platform", p.Tags["team"])
@@ -156,7 +158,9 @@ func TestBedrockApplicationInferenceProfile_Normalize_NilTags(t *testing.T) {
 		ModelSource: "arn:aws:bedrock:us-east-1::foundation-model/x",
 		GlobalTags:  map[string]string{"env": "prod"},
 	}
-	p.Normalize(ctx)
+	if err := p.Normalize(ctx); err != nil {
+		t.Fatal(err)
+	}
 
 	assert.NotNil(t, p.Tags)
 	assert.Equal(t, "prod", p.Tags["env"])

@@ -21,8 +21,12 @@ type Cloudfront struct {
 }
 
 // NewCloudfront creates a new instance of the Cloudfront wrapper.
-func NewCloudfront(ctx context.Context, providerName string) Cloudfront {
-	return Cloudfront{client.Cloudfront(ctx, providerName)}
+func NewCloudfront(ctx context.Context, providerName string) (Cloudfront, error) {
+	c, err := client.Cloudfront(ctx, providerName)
+	if err != nil {
+		return Cloudfront{}, err
+	}
+	return Cloudfront{c}, nil
 }
 
 // ExistingDistribution holds an existing CloudFront distribution's identifying

@@ -25,7 +25,9 @@ func TestEventBridgeTarget_Normalize_Firehose(t *testing.T) {
 			TargetResource: "my-delivery-stream",
 			TargetType:     &rawType,
 		}
-		tgt.Normalize(context.Background())
+		if err := tgt.Normalize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 		assert.Equal(t, EventBridgeTarget_Firehose, *tgt.TargetType)
 	})
 }

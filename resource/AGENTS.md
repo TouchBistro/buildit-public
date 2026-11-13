@@ -19,7 +19,7 @@ Every top-level resource type (one registered in `config`'s `resourcesConfig`) a
 both lifecycle interfaces from `resource/resource_lifecycle.go`:
 
 ```go
-Normalize(ctx context.Context)       // Prepare the definition: defaults, sanitizing, tag merge, name resolution
+Normalize(ctx context.Context) error // Prepare the definition: defaults, sanitizing, tag merge, name resolution
 Validate(ctx context.Context) error  // Check business rules; return a *ValidationError listing every failure
 ```
 
@@ -99,6 +99,9 @@ func (r ResourceName) Identifier() string {
 - Sanitize/format input values.
 - Merge global tags with resource-specific tags.
 - Resolve ARNs or identifiers from names.
+- Return an error for anything that cannot be resolved (a missing topic, secret or role, an
+  unknown provider). Never `panic`: `config` collects the error as a validation failure for
+  that resource and keeps checking the rest of the config.
 - **Note**: Normalize is for data preparation; Validate is for business rules.
 
 ### Validate Method Pattern
@@ -209,12 +212,21 @@ for these (DEVOPS-8900):
 - `Validate` rejects a non-empty `Tags` with `UnsupportedTagsMessage(<resource type>)`.
 - The type's Generate block in `config` calls `checkUnsupportedTags` BEFORE `Normalize`
   and skips the resource on error — several Normalize implementations reach AWS (the
-  eventbridge-connection secret fetch panics on a missing secret), and the config
+  eventbridge-connection secret fetch fails on a missing secret), and the config
   mistake must be reported ahead of any downstream lookup failure.
 - No `GlobalTags` field and no `tagsFor` wiring: global tags cannot reach these types,
   so pretending otherwise would be another silent no-op.
 - The docs entry for the type states tags are unsupported and that setting the field
   fails validation.
+
+## Pattern: Service Clients
+
+`client.<Service>(ctx, providerName)` and `awsw.New<Service>(ctx, providerName)` return
+`(T, error)`. The error is an unknown provider name; return it rather than logging it, and
+never pre-check `providers.Get`. `Compare`, `Apply` and `Destroy` errors are wrapped with the
+resource key by the graph; a `Normalize` error is collected by `config` as a validation error
+naming the resource. Nothing in this package panics or exits: buildit is also a library, and
+its host must get an error it can report (DEVOPS-8926).
 
 ## Pattern: Name-to-ARN Resolution
 

@@ -40,31 +40,40 @@ func (s SNSSubscription) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields.
-func (s *SNSSubscription) Normalize(ctx context.Context) {
+func (s *SNSSubscription) Normalize(ctx context.Context) error {
 	if len(s.Protocol) == 0 {
 		s.Protocol = "lambda"
 	}
 
 	// topic arn
-	topic, err := awsw.NewSNS(ctx, s.Context.ProviderName).TopicArnForName(ctx, s.TopicName)
+	snsSvc, err := awsw.NewSNS(ctx, s.Context.ProviderName)
 	if err != nil {
-		panic(err)
+		return err
+	}
+	topic, err := snsSvc.TopicArnForName(ctx, s.TopicName)
+	if err != nil {
+		return err
 	}
 	if topic == nil {
-		panic(errors.Errorf("cannot find topic %v ", s.TopicName))
+		return errors.Errorf("cannot find topic %v ", s.TopicName)
 	}
 	s.TopicArn = topic
 
 	// endpoint arn
 	name, qualifier := SplitNameQualifier(s.EndpointName)
-	endpoint, err := awsw.NewLambda(ctx, s.Context.ProviderName).LambdaArnForNameAndQualifier(ctx, name, qualifier)
+	lambdaSvc, err := awsw.NewLambda(ctx, s.Context.ProviderName)
 	if err != nil {
-		panic(err)
+		return err
+	}
+	endpoint, err := lambdaSvc.LambdaArnForNameAndQualifier(ctx, name, qualifier)
+	if err != nil {
+		return err
 	}
 	if endpoint == nil {
-		panic(errors.Errorf("cannot find endpoint %v ", s.EndpointName))
+		return errors.Errorf("cannot find endpoint %v ", s.EndpointName)
 	}
 	s.EndpointArn = endpoint
+	return nil
 }
 
 // Validate checks that the input provided is correct
@@ -122,8 +131,12 @@ func (s SNSSubscription) Apply(ctx context.Context) error {
 
 // apply provisions a new SNS subscription & it's targets
 func (s SNSSubscription) apply(ctx context.Context) error {
-	snsClient := client.SNS(ctx, s.Context.ProviderName)
-	_, err := snsClient.Subscribe(ctx, &sns.SubscribeInput{
+	snsClient, err := client.SNS(ctx, s.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
+	_, err = snsClient.Subscribe(ctx, &sns.SubscribeInput{
 		Protocol: aws.String(s.Protocol),
 		TopicArn: aws.String(*s.TopicArn),
 		Endpoint: aws.String(*s.EndpointArn),
@@ -181,7 +194,10 @@ func (s SNSSubscription) Destroy(ctx context.Context) error {
 		return nil
 	}
 
-	snsClient := client.SNS(ctx, s.Context.ProviderName)
+	snsClient, err := client.SNS(ctx, s.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	//now delete the rule
 	_, err = snsClient.Unsubscribe(ctx, &sns.UnsubscribeInput{
@@ -202,7 +218,11 @@ func (s SNSSubscription) Destroy(ctx context.Context) error {
 
 // fetchExisting returns the existing subscription rule details if found, and set TopicArn and EndpointArn
 func (s SNSSubscription) fetchExisting(ctx context.Context) (*snstypes.Subscription, error) {
-	snsClient := awsw.NewSNS(ctx, s.Context.ProviderName)
+	snsClient, err := awsw.NewSNS(ctx, s.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	nextToken := ""
 	for {
 		out, err := snsClient.ListSubscriptionsByTopic(ctx, &sns.ListSubscriptionsByTopicInput{

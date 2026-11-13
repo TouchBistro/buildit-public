@@ -18,8 +18,12 @@ type ServiceDiscovery struct {
 	*servicediscovery.Client
 }
 
-func NewServiceDiscovery(ctx context.Context, providerName string) ServiceDiscovery {
-	return ServiceDiscovery{client.ServiceDiscovery(ctx, providerName)}
+func NewServiceDiscovery(ctx context.Context, providerName string) (ServiceDiscovery, error) {
+	c, err := client.ServiceDiscovery(ctx, providerName)
+	if err != nil {
+		return ServiceDiscovery{}, err
+	}
+	return ServiceDiscovery{c}, nil
 }
 
 // ServiceArnForIdentifier resolves a ServiceDiscovery Service ARN from an identifier (ARN or ID).
@@ -31,10 +35,12 @@ func (s ServiceDiscovery) ServiceArnForIdentifier(ctx context.Context, identifie
 
 	sdService := s
 	if provider != "" {
-		if _, err := client.Provider(provider); err != nil {
-			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
+		var err error
+		sdService, err = NewServiceDiscovery(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		sdService = NewServiceDiscovery(ctx, provider)
+
 	}
 
 	// 1. Try Lookup by ID

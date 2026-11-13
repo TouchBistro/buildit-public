@@ -27,12 +27,13 @@ type externalResource struct {
 func (e externalResource) Key() resource.Key  { return resource.NewKey(e.Context.ProviderName, e.Name) }
 func (e externalResource) Identifier() string { return e.Name }
 
-func (e *externalResource) Normalize(context.Context) {
+func (e *externalResource) Normalize(context.Context) error {
 	if e.Enabled == nil {
 		enabled := true
 		e.Enabled = &enabled
 	}
 	e.normalized = true
+	return nil
 }
 
 func (e externalResource) Validate(context.Context) error {
@@ -72,7 +73,7 @@ func TestExternalResourceJoinsGraph(t *testing.T) {
 	}
 
 	var n resource.NormalizableResource = ext
-	n.Normalize(ctx)
+	require.NoError(t, n.Normalize(ctx))
 	assert.True(t, ext.normalized, "Normalize must reach the original value through the pointer")
 	require.NotNil(t, ext.Enabled)
 

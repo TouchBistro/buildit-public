@@ -30,22 +30,27 @@ func (r FirehoseDeliveryStream) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields.
-func (r *FirehoseDeliveryStream) Normalize(ctx context.Context) {
+func (r *FirehoseDeliveryStream) Normalize(ctx context.Context) error {
 	if r.StreamType == "" || strings.EqualFold(r.StreamType, string(firehosetypes.DeliveryStreamTypeDirectPut)) {
 		r.StreamType = string(firehosetypes.DeliveryStreamTypeDirectPut)
 	}
 
 	if r.Destination != nil {
-		r.Destination.normalize(ctx, r.Context.ProviderName)
+		if err := r.Destination.normalize(ctx, r.Context.ProviderName); err != nil {
+			return err
+		}
 	}
 	if r.IcebergDestination != nil {
-		r.IcebergDestination.normalize(ctx, r.Context.ProviderName)
+		if err := r.IcebergDestination.normalize(ctx, r.Context.ProviderName); err != nil {
+			return err
+		}
 	}
 
 	if r.Tags == nil {
 		r.Tags = make(map[string]string)
 	}
 	resource.ResourceTags(r.Tags).Merge(r.GlobalTags)
+	return nil
 }
 
 // Validate the FirehoseDeliveryStream input.
@@ -123,7 +128,11 @@ func (r FirehoseDeliveryStream) Destroy(ctx context.Context) error {
 		return nil
 	}
 
-	fhClient := client.Firehose(ctx, r.Context.ProviderName)
+	fhClient, err := client.Firehose(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	_, err = fhClient.DeleteDeliveryStream(ctx, &firehose.DeleteDeliveryStreamInput{
 		AllowForceDelete:   aws.Bool(true),
 		DeliveryStreamName: aws.String(r.Identifier()),
@@ -189,7 +198,11 @@ func (r FirehoseDeliveryStream) Compare(ctx context.Context) (resource.ResourceD
 
 // fetchExisting fetches firehose delivery stream if exists.
 func (r FirehoseDeliveryStream) fetchExisting(ctx context.Context) (*FirehoseDeliveryStream, error) {
-	fhClient := client.Firehose(ctx, r.Context.ProviderName)
+	fhClient, err := client.Firehose(ctx, r.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	out, err := fhClient.DescribeDeliveryStream(ctx, &firehose.DescribeDeliveryStreamInput{
 		DeliveryStreamName: aws.String(r.Identifier()),
 	})
@@ -221,7 +234,11 @@ func (r FirehoseDeliveryStream) fetchExisting(ctx context.Context) (*FirehoseDel
 	if dest.ExtendedS3DestinationDescription != nil {
 		existing.Destination = firehoseDestinationFromDescription(dest.ExtendedS3DestinationDescription)
 		// Perform reverse lookups
-		iam := awsw.NewIAM(ctx, r.Context.ProviderName)
+		iam, err := awsw.NewIAM(ctx, r.Context.ProviderName)
+		if err != nil {
+			return nil, err
+		}
+
 		roleName, err := iam.RoleNameForArn(ctx, aws.ToString(dest.ExtendedS3DestinationDescription.RoleARN))
 		if err != nil {
 			log.Warnf("failed to resolve role name for %s: %v", aws.ToString(dest.ExtendedS3DestinationDescription.RoleARN), err)
@@ -234,7 +251,11 @@ func (r FirehoseDeliveryStream) fetchExisting(ctx context.Context) (*FirehoseDel
 	if dest.IcebergDestinationDescription != nil {
 		existing.IcebergDestination = icebergDestinationFromDescription(dest.IcebergDestinationDescription)
 		// Perform reverse lookups
-		iam := awsw.NewIAM(ctx, r.Context.ProviderName)
+		iam, err := awsw.NewIAM(ctx, r.Context.ProviderName)
+		if err != nil {
+			return nil, err
+		}
+
 		roleName, err := iam.RoleNameForArn(ctx, aws.ToString(dest.IcebergDestinationDescription.RoleARN))
 		if err != nil {
 			log.Warnf("failed to resolve role name for %s: %v", aws.ToString(dest.IcebergDestinationDescription.RoleARN), err)
@@ -274,10 +295,12 @@ func bucketNameFromArn(arn string) string {
 
 // apply provisions a new firehose delivery stream.
 func (r FirehoseDeliveryStream) apply(ctx context.Context) error {
-	fhClient := client.Firehose(ctx, r.Context.ProviderName)
+	fhClient, err := client.Firehose(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	// Refactoring apply to handle mutually exclusive destinations
-	var err error
 	if r.IcebergDestination != nil {
 		_, err = fhClient.CreateDeliveryStream(ctx, &firehose.CreateDeliveryStreamInput{
 			DeliveryStreamName:              aws.String(r.Identifier()),
@@ -323,7 +346,10 @@ func (r FirehoseDeliveryStream) applyDiffs(ctx context.Context, diffs resource.R
 		return errors.Errorf("cannot retrieve existing firehose delivery stream")
 	}
 
-	fhClient := client.Firehose(ctx, r.Context.ProviderName)
+	fhClient, err := client.Firehose(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	if fhDiffs.destinationDiff {
 		if existing.deliveryStreamVersionID == nil || existing.destinationID == nil {
@@ -393,7 +419,11 @@ func toFirehoseTags(tags map[string]string) []firehosetypes.Tag {
 }
 
 func (r FirehoseDeliveryStream) fetchTags(ctx context.Context) (map[string]string, error) {
-	fhClient := client.Firehose(ctx, r.Context.ProviderName)
+	fhClient, err := client.Firehose(ctx, r.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	tags := make(map[string]string)
 
 	var startKey *string

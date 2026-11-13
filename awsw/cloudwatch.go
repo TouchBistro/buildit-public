@@ -18,8 +18,12 @@ type CloudWatch struct {
 	*cloudwatch.Client
 }
 
-func NewCloudWatch(ctx context.Context, providerName string) CloudWatch {
-	return CloudWatch{client.CloudWatch(ctx, providerName)}
+func NewCloudWatch(ctx context.Context, providerName string) (CloudWatch, error) {
+	c, err := client.CloudWatch(ctx, providerName)
+	if err != nil {
+		return CloudWatch{}, err
+	}
+	return CloudWatch{c}, nil
 }
 
 // AlarmArnForIdentifier resolves a CloudWatch Alarm ARN from an identifier (ARN or Alarm Name).
@@ -31,10 +35,12 @@ func (c CloudWatch) AlarmArnForIdentifier(ctx context.Context, identifier string
 
 	cwService := c
 	if provider != "" {
-		if _, err := client.Provider(provider); err != nil {
-			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
+		var err error
+		cwService, err = NewCloudWatch(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		cwService = NewCloudWatch(ctx, provider)
+
 	}
 
 	// 1. Try treating as Alarm Name

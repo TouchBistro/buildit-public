@@ -57,7 +57,7 @@ func (lb LoadBalancer) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields.
-func (lb *LoadBalancer) Normalize(ctx context.Context) {
+func (lb *LoadBalancer) Normalize(ctx context.Context) error {
 
 	// scheme
 	if lb.Scheme == nil {
@@ -92,8 +92,11 @@ func (lb *LoadBalancer) Normalize(ctx context.Context) {
 
 	// normalize the listeners
 	for _, listener := range lb.Listeners {
-		listener.Normalize(ctx, lb.Context)
+		if err := listener.Normalize(ctx, lb.Context); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // Validate the input
@@ -125,7 +128,11 @@ func (lb LoadBalancer) Validate(ctx context.Context) error {
 		errMessages = append(errMessages, "at least 2 subnets must be specified for an ALB")
 	}
 
-	subnets, err := awsw.NewEC2(ctx, lb.Context.ProviderName).SubnetByNames(ctx, lb.SubnetNames)
+	ec2Svc, err := awsw.NewEC2(ctx, lb.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+	subnets, err := ec2Svc.SubnetByNames(ctx, lb.SubnetNames)
 	if err != nil {
 		errMessages = append(errMessages, "error looking up subnets by name")
 	}
@@ -241,7 +248,10 @@ func (lb LoadBalancer) Destroy(ctx context.Context) error {
 		return nil
 	}
 
-	elbClient := client.ELB(ctx, lb.Context.ProviderName)
+	elbClient, err := client.ELB(ctx, lb.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	//delete listeners to avoid issues with dependencies.
 	listeners, err := elbClient.DescribeListeners(ctx, &elbv2.DescribeListenersInput{
@@ -353,16 +363,23 @@ func (lb LoadBalancer) Compare(ctx context.Context) (ResourceDiff, error) {
 		return diffs, nil
 	}
 
-	elbClient := client.ELB(ctx, lb.Context.ProviderName)
+	elbClient, err := client.ELB(ctx, lb.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
 
 	// subnet Ids
-	subnetIds, err := awsw.NewEC2(ctx, lb.Context.ProviderName).SubnetIdsByNames(ctx, lb.SubnetNames)
+	ec2Svc, err := awsw.NewEC2(ctx, lb.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	subnetIds, err := ec2Svc.SubnetIdsByNames(ctx, lb.SubnetNames)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed listing security group ids for lb")
 	}
 
 	// security groups
-	securityGroupIds, err := awsw.NewEC2(ctx, lb.Context.ProviderName).SecurityGroupIdsByNames(ctx, nil, lb.SecurityGroupNames)
+	securityGroupIds, err := ec2Svc.SecurityGroupIdsByNames(ctx, nil, lb.SecurityGroupNames)
 	if err != nil {
 		return nil, errors.Wrap(err, "error listing security group ids")
 	}
@@ -437,7 +454,11 @@ func (lb LoadBalancer) Compare(ctx context.Context) (ResourceDiff, error) {
 	}
 
 	// tags
-	awsTags, err := awsw.NewELB(ctx, lb.Context.ProviderName).GetResourceTags(ctx, *existing.LoadBalancerArn)
+	elbSvc, err := awsw.NewELB(ctx, lb.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	awsTags, err := elbSvc.GetResourceTags(ctx, *existing.LoadBalancerArn)
 	if err != nil {
 		return nil, err
 	}
@@ -588,7 +609,11 @@ func describeAWSListener(l elbv2types.Listener) string {
 // fetchExisting checks if the load balancer already exists
 func (lb LoadBalancer) fetchExisting(ctx context.Context) (*elbv2types.LoadBalancer, error) {
 
-	elbv2Client := client.ELB(ctx, lb.Context.ProviderName)
+	elbv2Client, err := client.ELB(ctx, lb.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	resp, err := elbv2Client.DescribeLoadBalancers(ctx, &elbv2.DescribeLoadBalancersInput{
 		Names: []string{lb.Identifier()},
 	})
@@ -606,14 +631,25 @@ func (lb LoadBalancer) fetchExisting(ctx context.Context) (*elbv2types.LoadBalan
 // apply makes or updates the resource
 func (lb LoadBalancer) apply(ctx context.Context) error {
 
-	elbClient := client.ELB(ctx, lb.Context.ProviderName)
+	elbClient, err := client.ELB(ctx, lb.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
-	subnetIDs, err := awsw.NewEC2(ctx, lb.Context.ProviderName).SubnetIdsByNames(ctx, lb.SubnetNames)
+	ec2Svc, err := awsw.NewEC2(ctx, lb.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+	subnetIDs, err := ec2Svc.SubnetIdsByNames(ctx, lb.SubnetNames)
 	if err != nil {
 		return errors.Wrap(err, "failed listing subnet ids for lb")
 	}
 
-	securityGroupIDs, err := awsw.NewEC2(ctx, lb.Context.ProviderName).SecurityGroupIdsByNames(ctx, nil, lb.SecurityGroupNames)
+	ec2Svc2, err := awsw.NewEC2(ctx, lb.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+	securityGroupIDs, err := ec2Svc2.SecurityGroupIdsByNames(ctx, nil, lb.SecurityGroupNames)
 	if err != nil {
 		return errors.Wrap(err, "failed listing security group ids for lb")
 	}
@@ -707,7 +743,10 @@ func (lb LoadBalancer) applyDiffs(ctx context.Context, diffs ResourceDiff) error
 		return errors.New("invalid diff type supplied")
 	}
 
-	elbClient := client.ELB(ctx, lb.Context.ProviderName)
+	elbClient, err := client.ELB(ctx, lb.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	// scheme
 	if lbDiffs.schemeDiff {
@@ -792,12 +831,20 @@ func (lb LoadBalancer) applyDiffs(ctx context.Context, diffs ResourceDiff) error
 	if lbDiffs.tagsDiff {
 		upserts := lbDiffs.tagDiff.Upserts()
 		if len(upserts) > 0 {
-			if err := awsw.NewELB(ctx, lb.Context.ProviderName).AddResourceTags(ctx, lbDiffs.loadbalancerArn, upserts); err != nil {
+			elbSvc, err := awsw.NewELB(ctx, lb.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			if err := elbSvc.AddResourceTags(ctx, lbDiffs.loadbalancerArn, upserts); err != nil {
 				return errors.Wrapf(err, "error updating load balancer tags for %v", lb.Identifier())
 			}
 		}
 		if len(lbDiffs.tagDiff.Deleted) > 0 {
-			if err := awsw.NewELB(ctx, lb.Context.ProviderName).DeleteResourceTags(ctx, lbDiffs.loadbalancerArn, lbDiffs.tagDiff.Deleted); err != nil {
+			elbSvc2, err := awsw.NewELB(ctx, lb.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			if err := elbSvc2.DeleteResourceTags(ctx, lbDiffs.loadbalancerArn, lbDiffs.tagDiff.Deleted); err != nil {
 				return errors.Wrapf(err, "error deleting load balancer tags for %v", lb.Identifier())
 			}
 		}
@@ -837,8 +884,12 @@ func (lb LoadBalancer) modifyLoadBalancerAttributes(ctx context.Context, arn *st
 		})
 	}
 
-	client := client.ELB(ctx, lb.Context.ProviderName)
-	_, err := client.ModifyLoadBalancerAttributes(ctx, &elbv2.ModifyLoadBalancerAttributesInput{
+	client, err := client.ELB(ctx, lb.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
+	_, err = client.ModifyLoadBalancerAttributes(ctx, &elbv2.ModifyLoadBalancerAttributesInput{
 		LoadBalancerArn: arn,
 		Attributes:      loadBalancerAttributes,
 	})

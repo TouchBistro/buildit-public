@@ -119,7 +119,7 @@ Documentation must be added in the **same PR** as the implementation. A feature 
 
 - ❌ **Ignoring errors**: Always handle or return errors.
 - ❌ **Naked returns**: Avoid in complex functions.
-- ❌ **Panic**: Only use in `Normalize()` for critical configuration errors.
+- ❌ **Panic / `log.Fatal`**: Never in `resource/`, `config/`, `client/` or `awsw/`. buildit is also a library; `Normalize` returns an error like every other lifecycle method (DEVOPS-8926).
 - ❌ **Duplicate Logging**: Log once at the appropriate level before returning.
 - ❌ **Hard-coding**: Never hard-code regions, account IDs, or identifiers.
 - ❌ **Mixing Concerns**: Keep validation and normalization separate.

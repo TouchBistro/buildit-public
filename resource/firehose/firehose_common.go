@@ -43,7 +43,7 @@ func (l *FirehoseLoggingOptions) toAWS() *firehosetypes.CloudWatchLoggingOptions
 	}
 }
 
-func (e *FirehoseEncryptionConfiguration) normalize(ctx context.Context, providerName string) {
+func (e *FirehoseEncryptionConfiguration) normalize(ctx context.Context, providerName string) error {
 	e.Type = strings.ToUpper(strings.TrimSpace(e.Type))
 	if e.Type == "" {
 		e.Type = string(firehosetypes.NoEncryptionConfigNoEncryption)
@@ -59,6 +59,7 @@ func (e *FirehoseEncryptionConfiguration) normalize(ctx context.Context, provide
 		// unless we add lookup logic later.
 		e.KMSKeyArn = e.KMSKey
 	}
+	return nil
 }
 
 func (e FirehoseEncryptionConfiguration) validate() []string {

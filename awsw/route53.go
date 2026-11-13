@@ -20,8 +20,12 @@ type Route53 struct {
 	providerName string
 }
 
-func NewRoute53(ctx context.Context, providerName string) Route53 {
-	return Route53{Client: client.Route53(ctx, providerName), providerName: providerName}
+func NewRoute53(ctx context.Context, providerName string) (Route53, error) {
+	c, err := client.Route53(ctx, providerName)
+	if err != nil {
+		return Route53{}, err
+	}
+	return Route53{Client: c, providerName: providerName}, nil
 }
 
 // hostedZoneCache holds each provider's hosted zone listing for the lifetime of the process
@@ -50,10 +54,12 @@ func (r Route53) HostedZoneArnForIdentifier(ctx context.Context, identifier stri
 
 	r53Service := r
 	if provider != "" {
-		if _, err := client.Provider(provider); err != nil {
-			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
+		var err error
+		r53Service, err = NewRoute53(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		r53Service = NewRoute53(ctx, provider)
+
 	}
 
 	// 1. Try Lookup by ID (hostedzone/ID or just ID)

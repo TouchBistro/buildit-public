@@ -42,6 +42,25 @@ func TestRetryerFor(t *testing.T) {
 	})
 }
 
+// An unknown provider name is an error a library consumer can report, never a process
+// exit (DEVOPS-8926). The accessors forward it unchanged.
+func TestUnknownProviderIsAnError(t *testing.T) {
+	_, err := Provider("example-missing")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `provider "example-missing" not found`)
+	assert.ErrorIs(t, err, providers.ErrUnknownProvider)
+
+	ctx := context.Background() // no retry values either: nothing here may panic
+	assert.NotPanics(t, func() {
+		c, err := ELB(ctx, "example-missing")
+		assert.Nil(t, c)
+		assert.ErrorIs(t, err, providers.ErrUnknownProvider)
+		g, err := ACMGlobal(ctx, "example-missing")
+		assert.Nil(t, g)
+		assert.ErrorIs(t, err, providers.ErrUnknownProvider)
+	})
+}
+
 // offlineProvider builds an awesome provider that is registered by name but never
 // validated, so it loads no credentials and makes no AWS call.
 func offlineProvider(t *testing.T, name string) providers.CredsProvider {

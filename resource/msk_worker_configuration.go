@@ -21,7 +21,7 @@ import (
 
 // MSKWorkerConfiguration represents a worker configuration
 type MSKWorkerConfiguration struct {
-	BaseResource `yaml:",inline"`
+	BaseResource          `yaml:",inline"`
 	Name                  string            `yaml:"-"`
 	Description           string            `yaml:"description"`
 	Secrets               map[string]string `yaml:"secrets"`
@@ -44,7 +44,7 @@ func (c MSKWorkerConfiguration) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields.
-func (c *MSKWorkerConfiguration) Normalize(ctx context.Context) {
+func (c *MSKWorkerConfiguration) Normalize(ctx context.Context) error {
 	if c.Tags == nil {
 		c.Tags = make(map[string]string)
 	}
@@ -52,9 +52,13 @@ func (c *MSKWorkerConfiguration) Normalize(ctx context.Context) {
 
 	// secrets
 	for k, v := range c.Secrets {
-		val, err := awsw.NewSecretsManager(ctx, c.Context.ProviderName).GetValueBySecretId(ctx, v)
+		secretsManagerSvc, err := awsw.NewSecretsManager(ctx, c.Context.ProviderName)
 		if err != nil {
-			panic(err)
+			return err
+		}
+		val, err := secretsManagerSvc.GetValueBySecretId(ctx, v)
+		if err != nil {
+			return err
 		}
 		c.Secrets[k] = *val
 	}
@@ -69,8 +73,9 @@ func (c *MSKWorkerConfiguration) Normalize(ctx context.Context) {
 
 	// convert content to Base64 encoded
 	if err := c.contentToPropertiesFileContent(); err != nil {
-		panic(err)
+		return err
 	}
+	return nil
 }
 
 // Validate checks that the input provided is correct
@@ -137,8 +142,12 @@ func (c MSKWorkerConfiguration) Apply(ctx context.Context) error {
 
 // apply provisions a new worker configuration
 func (c MSKWorkerConfiguration) apply(ctx context.Context) error {
-	mskClient := client.MSK(ctx, c.Context.ProviderName)
-	_, err := mskClient.CreateWorkerConfiguration(ctx, &kafkaconnect.CreateWorkerConfigurationInput{
+	mskClient, err := client.MSK(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
+	_, err = mskClient.CreateWorkerConfiguration(ctx, &kafkaconnect.CreateWorkerConfigurationInput{
 		Name:                  aws.String(c.Name),
 		Description:           aws.String(c.Description),
 		PropertiesFileContent: aws.String(c.PropertiesFileContent),
@@ -175,7 +184,11 @@ func (c MSKWorkerConfiguration) applyDiffs(ctx context.Context, diffs ResourceDi
 		return errors.Errorf("cannot retrieve existing worker configuration")
 	}
 
-	mskClient := awsw.NewMSK(ctx, c.Context.ProviderName)
+	mskClient, err := awsw.NewMSK(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	if pluginDiffs.tagsDiff {
 		upserts := pluginDiffs.tagDiff.Upserts()
 		if len(upserts) > 0 {
@@ -274,7 +287,10 @@ func (c MSKWorkerConfiguration) Destroy(ctx context.Context) error {
 		return nil
 	}
 
-	mskClient := client.MSK(ctx, c.Context.ProviderName)
+	mskClient, err := client.MSK(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	_, err = mskClient.DeleteWorkerConfiguration(ctx, &kafkaconnect.DeleteWorkerConfigurationInput{
 		WorkerConfigurationArn: existing._arn,
@@ -293,7 +309,11 @@ func (c MSKWorkerConfiguration) Destroy(ctx context.Context) error {
 
 // fetchExisting returns the existing worker configuration details if found
 func (c MSKWorkerConfiguration) fetchExisting(ctx context.Context) (*MSKWorkerConfiguration, error) {
-	mskClient := client.MSK(ctx, c.Context.ProviderName)
+	mskClient, err := client.MSK(ctx, c.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	nextToken := ""
 	for {
 		out, err := mskClient.ListWorkerConfigurations(ctx, &kafkaconnect.ListWorkerConfigurationsInput{

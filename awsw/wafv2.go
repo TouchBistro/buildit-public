@@ -19,8 +19,12 @@ type WAFV2 struct {
 }
 
 // NewWAFV2 creates a new instance of the WAFV2 wrapper.
-func NewWAFV2(ctx context.Context, providerName string) WAFV2 {
-	return WAFV2{client.WAFV2Global(ctx, providerName)}
+func NewWAFV2(ctx context.Context, providerName string) (WAFV2, error) {
+	c, err := client.WAFV2Global(ctx, providerName)
+	if err != nil {
+		return WAFV2{}, err
+	}
+	return WAFV2{c}, nil
 }
 
 // WebACLArnForIdentifier resolves a CloudFront-scoped (global) web ACL ARN from an

@@ -34,7 +34,7 @@ func (b S3Bucket) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields.
-func (b *S3Bucket) Normalize(ctx context.Context) {
+func (b *S3Bucket) Normalize(ctx context.Context) error {
 	b.Bucket = strings.TrimPrefix(b.Bucket, "arn:aws:s3:::")
 
 	if b.Tags == nil {
@@ -48,6 +48,7 @@ func (b *S3Bucket) Normalize(ctx context.Context) {
 	if _, ok := b.Tags[util.BuilditResourceIDTagKey]; ok {
 		b.Tags[util.BuilditResourceIDTagKey] = util.SafeTagValue(b.Bucket)
 	}
+	return nil
 }
 
 // Validate checks that the input provided is correct
@@ -89,7 +90,10 @@ func (b S3Bucket) applyDiffs(ctx context.Context, diffs ResourceDiff) error {
 		return errors.New("invalid diff type")
 	}
 
-	s3Client := awsw.NewS3(ctx, b.Context.ProviderName)
+	s3Client, err := awsw.NewS3(ctx, b.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	if s3Diff.tagsDiff {
 		err := s3Client.PutBucketTagging(ctx, b.Bucket, b.Tags)
@@ -113,8 +117,12 @@ func (b S3Bucket) applyDiffs(ctx context.Context, diffs ResourceDiff) error {
 }
 
 func (b S3Bucket) apply(ctx context.Context) error {
-	s3Client := awsw.NewS3(ctx, b.Context.ProviderName)
-	err := s3Client.CreateBucket(ctx, b.Bucket)
+	s3Client, err := awsw.NewS3(ctx, b.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
+	err = s3Client.CreateBucket(ctx, b.Bucket)
 	if err != nil {
 		return errors.Wrapf(err, "error creating bucket %v", b.Bucket)
 	}
@@ -142,7 +150,10 @@ func (b S3Bucket) apply(ctx context.Context) error {
 
 // Destroy deletes the bucket
 func (b S3Bucket) Destroy(ctx context.Context) error {
-	s3Client := awsw.NewS3(ctx, b.Context.ProviderName)
+	s3Client, err := awsw.NewS3(ctx, b.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	// Check if exists
 	exists, err := b.bucketExists(ctx)
@@ -200,7 +211,11 @@ func (b S3Bucket) Compare(ctx context.Context) (ResourceDiff, error) {
 		return diffs, nil
 	}
 
-	s3Client := awsw.NewS3(ctx, b.Context.ProviderName)
+	s3Client, err := awsw.NewS3(ctx, b.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	existingTags, err := s3Client.GetBucketTagging(ctx, b.Bucket)
 	if err != nil {
 		// GetBucketTagging returns NoSuchTagSet if no tags exist
@@ -244,8 +259,12 @@ func (b S3Bucket) Compare(ctx context.Context) (ResourceDiff, error) {
 }
 
 func (b S3Bucket) bucketExists(ctx context.Context) (bool, error) {
-	s3Client := awsw.NewS3(ctx, b.Context.ProviderName)
-	err := s3Client.HeadBucket(ctx, b.Bucket)
+	s3Client, err := awsw.NewS3(ctx, b.Context.ProviderName)
+	if err != nil {
+		return false, err
+	}
+
+	err = s3Client.HeadBucket(ctx, b.Bucket)
 	if err != nil {
 		var nf *types.NotFound
 		if errors.As(err, &nf) {

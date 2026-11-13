@@ -19,8 +19,12 @@ type Lambda struct {
 }
 
 // NewLambda creates a new instance of Lambda wrapper
-func NewLambda(ctx context.Context, providerName string) Lambda {
-	return Lambda{client.Lambda(ctx, providerName)}
+func NewLambda(ctx context.Context, providerName string) (Lambda, error) {
+	c, err := client.Lambda(ctx, providerName)
+	if err != nil {
+		return Lambda{}, err
+	}
+	return Lambda{c}, nil
 }
 
 // FunctionArnForIdentifier resolves a Lambda Function ARN from an identifier (ARN or Name).
@@ -32,10 +36,12 @@ func (l Lambda) FunctionArnForIdentifier(ctx context.Context, identifier string)
 
 	lambdaService := l
 	if provider != "" {
-		if _, err := client.Provider(provider); err != nil {
-			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
+		var err error
+		lambdaService, err = NewLambda(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		lambdaService = NewLambda(ctx, provider)
+
 	}
 
 	// Direct lookup by Name

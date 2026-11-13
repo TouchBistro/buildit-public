@@ -263,7 +263,7 @@ func (c CloudfrontDistribution) Identifier() string {
 }
 
 // Normalize sets default values mirroring wafer's opinionated configuration.
-func (c *CloudfrontDistribution) Normalize(ctx context.Context) {
+func (c *CloudfrontDistribution) Normalize(ctx context.Context) error {
 	// Seed the display map with the managed policy names so diff messages render the
 	// documented policy names instead of their UUIDs, whichever form the user supplied.
 	if c.displayValues == nil {
@@ -363,6 +363,7 @@ func (c *CloudfrontDistribution) Normalize(ctx context.Context) {
 		c.Tags = make(map[string]string)
 	}
 	ResourceTags(c.Tags).Merge(c.GlobalTags)
+	return nil
 }
 
 // normalizeCacheBehavior canonicalizes case-insensitive values and applies wafer's
@@ -658,7 +659,11 @@ func (c CloudfrontDistribution) apply(ctx context.Context) error {
 		return err
 	}
 
-	cfClient := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	cfClient, err := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	out, err := cfClient.CreateDistributionWithTags(ctx, cfg, c.Tags)
 	if err != nil {
 		return err
@@ -676,7 +681,10 @@ func (c CloudfrontDistribution) applyDiffs(ctx context.Context, diffs ResourceDi
 		return errors.New("invalid diff type supplied")
 	}
 
-	cfClient := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	cfClient, err := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
 
 	if cfDiff.configChanged {
 		if _, err := cfClient.UpdateDistributionConfig(ctx, cfDiff.id, cfDiff.etag, cfDiff.desired); err != nil {
@@ -708,7 +716,11 @@ func (c CloudfrontDistribution) applyDiffs(ctx context.Context, diffs ResourceDi
 // deferring the wait is safe. Destroy does NOT rely on this: it performs its own inline
 // wait, since AWS rejects deleting a distribution whose status is InProgress.
 func (c CloudfrontDistribution) Wait(ctx context.Context) error {
-	cfClient := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	cfClient, err := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	existing, err := cfClient.FindDistributionByCallerReference(ctx, c.Identifier())
 	if err != nil {
 		return err
@@ -730,7 +742,11 @@ func (c CloudfrontDistribution) Wait(ctx context.Context) error {
 func (c CloudfrontDistribution) Destroy(ctx context.Context) error {
 	log.Debugf("destroying cloudfront distribution %v", c.Identifier())
 
-	cfClient := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	cfClient, err := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	existing, err := cfClient.FindDistributionByCallerReference(ctx, c.Identifier())
 	if err != nil {
 		return err
@@ -785,7 +801,11 @@ type CloudfrontDistributionDiff struct {
 
 // Compare fetches the existing distribution and diffs it against the desired config.
 func (c CloudfrontDistribution) Compare(ctx context.Context) (ResourceDiff, error) {
-	cfClient := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	cfClient, err := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	existing, err := cfClient.FindDistributionByCallerReference(ctx, c.Identifier())
 	if err != nil {
 		return nil, err
@@ -981,7 +1001,11 @@ func (c CloudfrontDistribution) generateConfig(ctx context.Context) (*cftypes.Di
 		if strings.HasPrefix(name, "arn:") {
 			webACLArn = name
 		} else {
-			arn, err := awsw.NewWAFV2(ctx, c.Context.ProviderName).WebACLArnForIdentifier(ctx, name)
+			wafv2Svc, err := awsw.NewWAFV2(ctx, c.Context.ProviderName)
+			if err != nil {
+				return nil, err
+			}
+			arn, err := wafv2Svc.WebACLArnForIdentifier(ctx, name)
 			if err != nil {
 				return nil, errors.Wrapf(err, "error resolving web acl %q for cloudfront distribution %v", name, c.Identifier())
 			}
@@ -1018,7 +1042,11 @@ func (c CloudfrontDistribution) generateConfig(ctx context.Context) (*cftypes.Di
 		if strings.HasPrefix(*c.Certificate, "arn:") {
 			certArn = *c.Certificate
 		} else {
-			arn, err := awsw.NewACMGlobal(ctx, c.Context.ProviderName).CertificateArnForIdentifier(ctx, *c.Certificate)
+			acmGlobalSvc, err := awsw.NewACMGlobal(ctx, c.Context.ProviderName)
+			if err != nil {
+				return nil, err
+			}
+			arn, err := acmGlobalSvc.CertificateArnForIdentifier(ctx, *c.Certificate)
 			if err != nil {
 				return nil, errors.Wrapf(err, "error resolving certificate %q for cloudfront distribution %v", *c.Certificate, c.Identifier())
 			}
@@ -1110,7 +1138,11 @@ func (c CloudfrontDistribution) buildDefaultCacheBehavior(ctx context.Context) (
 // generateConfig call by design, mirroring certificate and function-ARN resolution.
 func (c CloudfrontDistribution) resolveCacheBehaviorPolicies(ctx context.Context, b CloudfrontCacheBehavior) (CloudfrontCacheBehavior, error) {
 	if b.CachePolicyId != nil && !awsw.IsCloudfrontPolicyId(*b.CachePolicyId) {
-		id, err := awsw.NewCloudfront(ctx, c.Context.ProviderName).CachePolicyIdForIdentifier(ctx, *b.CachePolicyId)
+		cloudfrontSvc, err := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+		if err != nil {
+			return CloudfrontCacheBehavior{}, err
+		}
+		id, err := cloudfrontSvc.CachePolicyIdForIdentifier(ctx, *b.CachePolicyId)
 		if err != nil {
 			return b, errors.Wrapf(err, "error resolving cache policy %q for cloudfront distribution %v", *b.CachePolicyId, c.Identifier())
 		}
@@ -1118,7 +1150,11 @@ func (c CloudfrontDistribution) resolveCacheBehaviorPolicies(ctx context.Context
 		b.CachePolicyId = aws.String(id)
 	}
 	if b.OriginRequestPolicyId != nil && !awsw.IsCloudfrontPolicyId(*b.OriginRequestPolicyId) {
-		id, err := awsw.NewCloudfront(ctx, c.Context.ProviderName).OriginRequestPolicyIdForIdentifier(ctx, *b.OriginRequestPolicyId)
+		cloudfrontSvc2, err := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+		if err != nil {
+			return CloudfrontCacheBehavior{}, err
+		}
+		id, err := cloudfrontSvc2.OriginRequestPolicyIdForIdentifier(ctx, *b.OriginRequestPolicyId)
 		if err != nil {
 			return b, errors.Wrapf(err, "error resolving origin request policy %q for cloudfront distribution %v", *b.OriginRequestPolicyId, c.Identifier())
 		}
@@ -1126,7 +1162,11 @@ func (c CloudfrontDistribution) resolveCacheBehaviorPolicies(ctx context.Context
 		b.OriginRequestPolicyId = aws.String(id)
 	}
 	if b.ResponseHeadersPolicyId != nil && !awsw.IsCloudfrontPolicyId(*b.ResponseHeadersPolicyId) {
-		id, err := awsw.NewCloudfront(ctx, c.Context.ProviderName).ResponseHeadersPolicyIdForIdentifier(ctx, *b.ResponseHeadersPolicyId)
+		cloudfrontSvc3, err := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+		if err != nil {
+			return CloudfrontCacheBehavior{}, err
+		}
+		id, err := cloudfrontSvc3.ResponseHeadersPolicyIdForIdentifier(ctx, *b.ResponseHeadersPolicyId)
 		if err != nil {
 			return b, errors.Wrapf(err, "error resolving response headers policy %q for cloudfront distribution %v", *b.ResponseHeadersPolicyId, c.Identifier())
 		}
@@ -1157,7 +1197,11 @@ func (c CloudfrontDistribution) resolveOrigins(ctx context.Context) error {
 
 		switch o.Type {
 		case CloudfrontOriginTypeVpc:
-			vo, err := awsw.NewCloudfront(ctx, c.Context.ProviderName).VpcOriginByIdentifier(ctx, target)
+			cloudfrontSvc, err := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			vo, err := cloudfrontSvc.VpcOriginByIdentifier(ctx, target)
 			if err != nil {
 				return errors.Wrapf(err, "error resolving vpc origin %q for origin %q", o.Target, o.Name)
 			}
@@ -1170,7 +1214,11 @@ func (c CloudfrontDistribution) resolveOrigins(ctx context.Context) error {
 			if !strings.Contains(endpointArn, ":elasticloadbalancing:") {
 				return errors.Errorf("vpc origin %q endpoint %q is not a load balancer; only ALB/NLB VPC origins are supported", o.Target, endpointArn)
 			}
-			lb, err := awsw.NewELB(ctx, targetProvider).FindLoadBalancerByArn(ctx, endpointArn)
+			elbSvc, err := awsw.NewELB(ctx, targetProvider)
+			if err != nil {
+				return err
+			}
+			lb, err := elbSvc.FindLoadBalancerByArn(ctx, endpointArn)
 			if err != nil {
 				return errors.Wrapf(err, "error resolving load balancer for vpc origin %q (origin %q)", o.Target, o.Name)
 			}
@@ -1186,7 +1234,11 @@ func (c CloudfrontDistribution) resolveOrigins(ctx context.Context) error {
 				o.resolvedDomainName = target
 				continue
 			}
-			region, err := awsw.NewS3(ctx, targetProvider).BucketRegion(ctx, target)
+			s3Svc, err := awsw.NewS3(ctx, targetProvider)
+			if err != nil {
+				return err
+			}
+			region, err := s3Svc.BucketRegion(ctx, target)
 			if err != nil {
 				return errors.Wrapf(err, "error resolving s3 bucket %q for origin %q", o.Target, o.Name)
 			}
@@ -1201,7 +1253,11 @@ func (c CloudfrontDistribution) resolveOrigins(ctx context.Context) error {
 				o.resolvedDomainName = target
 				continue
 			}
-			lb, err := awsw.NewELB(ctx, targetProvider).FindLoadBalancerForName(ctx, target)
+			elbSvc2, err := awsw.NewELB(ctx, targetProvider)
+			if err != nil {
+				return err
+			}
+			lb, err := elbSvc2.FindLoadBalancerForName(ctx, target)
 			if err != nil {
 				return errors.Wrapf(err, "error resolving load balancer %q for origin %q", o.Target, o.Name)
 			}
@@ -1313,7 +1369,11 @@ func (c CloudfrontDistribution) buildFunctionAssociations(ctx context.Context, f
 	for _, fa := range fas {
 		fnArn := fa.FunctionARN
 		if !strings.HasPrefix(fnArn, "arn:") {
-			resolved, err := awsw.NewCloudfront(ctx, c.Context.ProviderName).FunctionArnForIdentifier(ctx, fnArn)
+			cloudfrontSvc, err := awsw.NewCloudfront(ctx, c.Context.ProviderName)
+			if err != nil {
+				return nil, err
+			}
+			resolved, err := cloudfrontSvc.FunctionArnForIdentifier(ctx, fnArn)
 			if err != nil {
 				return nil, errors.Wrapf(err, "error resolving cloudfront function %q", fnArn)
 			}

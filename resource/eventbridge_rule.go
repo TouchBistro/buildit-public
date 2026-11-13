@@ -19,7 +19,7 @@ import (
 
 // EventBridgeRule represents an EventBridge rule; only Cron (Schedule) rules are supported
 type EventBridgeRule struct {
-	BaseResource `yaml:",inline"`
+	BaseResource       `yaml:",inline"`
 	Name               string               `yaml:"-"`
 	Description        string               `yaml:"description"`
 	EventBusName       *string              `yaml:"eventbusName"`
@@ -43,7 +43,7 @@ func (r EventBridgeRule) Identifier() string {
 }
 
 // Normalize will set any default values or sanitize/clean up any necessary fields.
-func (r *EventBridgeRule) Normalize(ctx context.Context) {
+func (r *EventBridgeRule) Normalize(ctx context.Context) error {
 
 	if r.EventBusName == nil || len(*r.EventBusName) == 0 {
 		r.EventBusName = aws.String("default")
@@ -64,8 +64,11 @@ func (r *EventBridgeRule) Normalize(ctx context.Context) {
 	for _, target := range r.Targets {
 		target.RuleName = r.Name
 		target.EventBusName = *r.EventBusName
-		target.Normalize(ctx)
+		if err := target.Normalize(ctx); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // Validate checks that the input provided is correct
@@ -149,7 +152,11 @@ func (r EventBridgeRule) Destroy(ctx context.Context) error {
 		return nil
 	}
 
-	ebrClient := client.EventBridge(ctx, r.Context.ProviderName)
+	ebrClient, err := client.EventBridge(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	err = r.destroyExistingTargets(ctx)
 
 	if err != nil {
@@ -277,7 +284,11 @@ func (r EventBridgeRule) Compare(ctx context.Context) (ResourceDiff, error) {
 	//when no diff's found, check if there were targets previously added, but removed in new list...
 	if !diffs.targetDiff {
 
-		ebrClient := client.EventBridge(ctx, r.Context.ProviderName)
+		ebrClient, err := client.EventBridge(ctx, r.Context.ProviderName)
+		if err != nil {
+			return nil, err
+		}
+
 		out, err := ebrClient.ListTargetsByRule(ctx, &eventbridge.ListTargetsByRuleInput{
 			EventBusName: r.EventBusName,
 			Rule:         aws.String(r.Name),
@@ -296,7 +307,11 @@ func (r EventBridgeRule) Compare(ctx context.Context) (ResourceDiff, error) {
 	}
 
 	//tags
-	awsTags, err := awsw.NewEventBridge(ctx, r.Context.ProviderName).GetResourceTags(ctx, *existing.Arn)
+	eventBridgeSvc, err := awsw.NewEventBridge(ctx, r.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	awsTags, err := eventBridgeSvc.GetResourceTags(ctx, *existing.Arn)
 	if err != nil {
 		return nil, err
 	}
@@ -316,7 +331,11 @@ func (r EventBridgeRule) Compare(ctx context.Context) (ResourceDiff, error) {
 
 // fetchExisting returns the existing eventbridge rule details if found
 func (r EventBridgeRule) fetchExisting(ctx context.Context) (*eventbridgetypes.Rule, error) {
-	ebrClient := client.EventBridge(ctx, r.Context.ProviderName)
+	ebrClient, err := client.EventBridge(ctx, r.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	out, err := ebrClient.ListRules(ctx, &eventbridge.ListRulesInput{
 		NamePrefix:   aws.String(r.Name),
 		EventBusName: r.EventBusName,
@@ -394,14 +413,24 @@ func (r EventBridgeRule) applyDiffs(ctx context.Context, diffs ResourceDiff) err
 	if ebDiffs.tagsDiff {
 		upserts := ebDiffs.tagDiff.Upserts()
 		if len(upserts) > 0 {
-			err = awsw.NewEventBridge(ctx, r.Context.ProviderName).AddResourceTags(ctx, *existing.Arn, upserts)
+			var eventBridgeSvc awsw.EventBridge
+			eventBridgeSvc, err = awsw.NewEventBridge(ctx, r.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			err = eventBridgeSvc.AddResourceTags(ctx, *existing.Arn, upserts)
 			if err != nil {
 				return errors.Wrapf(err, "error updating eventbridge rule tags for %v", r.Identifier())
 			}
 		}
 
 		if len(ebDiffs.tagDiff.Deleted) > 0 {
-			err = awsw.NewEventBridge(ctx, r.Context.ProviderName).DeleteResourceTags(ctx, *existing.Arn, ebDiffs.tagDiff.Deleted)
+			var eventBridgeSvc2 awsw.EventBridge
+			eventBridgeSvc2, err = awsw.NewEventBridge(ctx, r.Context.ProviderName)
+			if err != nil {
+				return err
+			}
+			err = eventBridgeSvc2.DeleteResourceTags(ctx, *existing.Arn, ebDiffs.tagDiff.Deleted)
 			if err != nil {
 				return errors.Wrapf(err, "error deleting eventbridge rule tags for %v", r.Identifier())
 			}
@@ -438,8 +467,12 @@ func (r EventBridgeRule) applyRule(ctx context.Context) error {
 		ruleState = eventbridgetypes.RuleStateDisabled
 	}
 
-	ebrClient := client.EventBridge(ctx, r.Context.ProviderName)
-	_, err := ebrClient.PutRule(ctx, &eventbridge.PutRuleInput{
+	ebrClient, err := client.EventBridge(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
+	_, err = ebrClient.PutRule(ctx, &eventbridge.PutRuleInput{
 		Name:               aws.String(r.Name),
 		Description:        aws.String(r.Description),
 		EventBusName:       r.EventBusName,
@@ -462,7 +495,9 @@ func (r EventBridgeRule) applyTargets(ctx context.Context) error {
 		target.EventBusName = *r.EventBusName
 		target.RuleName = r.Name
 		target.Tags = InheritedTags(r.Tags)
-		target.Normalize(ctx)
+		if err := target.Normalize(ctx); err != nil {
+			return err
+		}
 		err := target.Apply(ctx, r.Context)
 		if err != nil {
 			return errors.Wrapf(err, "error adding target %v to eventbridge rule %v", target.ID, r.Identifier())
@@ -474,7 +509,11 @@ func (r EventBridgeRule) applyTargets(ctx context.Context) error {
 // destroyExistingTargets will remove all existing targets
 func (r EventBridgeRule) destroyExistingTargets(ctx context.Context) error {
 
-	ebrClient := client.EventBridge(ctx, r.Context.ProviderName)
+	ebrClient, err := client.EventBridge(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
 	out, err := ebrClient.ListTargetsByRule(ctx, &eventbridge.ListTargetsByRuleInput{
 		EventBusName: r.EventBusName,
 		Rule:         aws.String(r.Name),

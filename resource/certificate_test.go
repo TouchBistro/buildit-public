@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	acmtypes "github.com/aws/aws-sdk-go-v2/service/acm/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The resource name is the certificate's identity (Identifier and buildit:resource-id);
@@ -19,7 +20,9 @@ func TestACMCertificate_DomainNameDefaultsToName(t *testing.T) {
 			Name:             "api.example.com",
 			ValidationDomain: "default/example.com",
 		}
-		c.Normalize(context.Background())
+		if err := c.Normalize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 
 		assert.Equal(t, "api.example.com", c.DomainName)
 		assert.Equal(t, "api.example.com", c.Identifier())
@@ -31,7 +34,9 @@ func TestACMCertificate_DomainNameDefaultsToName(t *testing.T) {
 			DomainName:       "api.example.com",
 			ValidationDomain: "default/example.com",
 		}
-		c.Normalize(context.Background())
+		if err := c.Normalize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 
 		assert.Equal(t, "api.example.com", c.DomainName)
 		assert.Equal(t, "example-api-cert-blue", c.Identifier())
@@ -43,19 +48,25 @@ func TestACMCertificate_DomainNameDefaultsToName(t *testing.T) {
 func TestACMCertificate_Normalize_ValidationDomain(t *testing.T) {
 	t.Run("omitted stays empty", func(t *testing.T) {
 		c := ACMCertificate{Name: "api.example.com"}
-		c.Normalize(context.Background())
+		if err := c.Normalize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 		assert.Equal(t, "", c.ValidationDomain)
 	})
 
 	t.Run("supplied gets the trailing dot", func(t *testing.T) {
 		c := ACMCertificate{Name: "api.example.com", ValidationDomain: "default/example.com"}
-		c.Normalize(context.Background())
+		if err := c.Normalize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 		assert.Equal(t, "default/example.com.", c.ValidationDomain)
 	})
 
 	t.Run("supplied with a trailing dot is unchanged", func(t *testing.T) {
 		c := ACMCertificate{Name: "api.example.com", ValidationDomain: "dns::example.com."}
-		c.Normalize(context.Background())
+		if err := c.Normalize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 		assert.Equal(t, "dns::example.com.", c.ValidationDomain)
 	})
 }
@@ -90,7 +101,9 @@ func TestACMCertificate_ResolveValidationTarget_ExplicitPrecedence(t *testing.T)
 		ValidationDomain: "dns/example.com.",
 		BaseResource:     BaseResource{Context: Context{ProviderName: "main"}},
 	}
-	c.Normalize(context.Background())
+	if err := c.Normalize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	target, err := c.resolveValidationTarget(context.Background(), "api.example.com", "_abc.api.example.com.")
 	assert.NoError(t, err)
 	assert.Equal(t, validationTarget{provider: "dns", zone: "example.com."}, target)
@@ -103,7 +116,9 @@ func TestACMCertificate_ResolveValidationTarget_ExplicitPrecedence(t *testing.T)
 func TestACMCertificate_Normalize_ValidationZones(t *testing.T) {
 	t.Run("omitted leaves placement to discovery", func(t *testing.T) {
 		c := ACMCertificate{Name: "api.example.com", SAN: []string{"api.example.io"}}
-		c.Normalize(context.Background())
+		if err := c.Normalize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 		assert.Nil(t, c.validationZones)
 	})
 
@@ -113,7 +128,9 @@ func TestACMCertificate_Normalize_ValidationZones(t *testing.T) {
 			SAN:              []string{"*.api.example.com", "API.example.io."},
 			ValidationDomain: "dns::example.com",
 		}
-		c.Normalize(context.Background())
+		if err := c.Normalize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 		assert.Equal(t, map[string]string{
 			"api.example.com.":   "dns::example.com.",
 			"*.api.example.com.": "dns::example.com.",
@@ -132,7 +149,9 @@ func TestACMCertificate_Normalize_ValidationZones(t *testing.T) {
 			},
 			ValidationDomain: "dns::other.example.com",
 		}
-		c.Normalize(context.Background())
+		if err := c.Normalize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 		assert.Equal(t, map[string]string{
 			"api.example.com.":   "dns::example.com.",
 			"*.api.example.com.": "dns/example.com.",
@@ -193,7 +212,9 @@ func TestACMCertificate_Validate_ValidationZones(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.cert.Normalize(context.Background())
+			if err := tt.cert.Normalize(context.Background()); err != nil {
+				t.Fatal(err)
+			}
 			err := tt.cert.Validate(context.Background())
 			if tt.wantMsgs == nil {
 				assert.NoError(t, err)
@@ -223,7 +244,9 @@ func TestACMCertificate_ResolveValidationTarget_PerDomain(t *testing.T) {
 		},
 		BaseResource: BaseResource{Context: Context{ProviderName: "main"}},
 	}
-	c.Normalize(context.Background())
+	if err := c.Normalize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct {
 		domain string
@@ -293,7 +316,9 @@ func TestACMCertificate_ValidationLookupDomains(t *testing.T) {
 func TestACMCertificate_CheckValidationZones_SkipsWhenExplicit(t *testing.T) {
 	t.Run("legacy single zone", func(t *testing.T) {
 		c := ACMCertificate{Name: "api.example.com", SAN: []string{"api.example.io"}, ValidationDomain: "dns/example.com."}
-		c.Normalize(context.Background())
+		if err := c.Normalize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 		assert.Nil(t, c.discoveredDomains())
 		assert.NoError(t, c.checkValidationZones(context.Background()))
 	})
@@ -304,14 +329,18 @@ func TestACMCertificate_CheckValidationZones_SkipsWhenExplicit(t *testing.T) {
 			SAN:             []string{"api.example.io"},
 			ValidationZones: map[string]string{"api.example.com": "dns::example.com", "api.example.io": "dns::example.io"},
 		}
-		c.Normalize(context.Background())
+		if err := c.Normalize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 		assert.Nil(t, c.discoveredDomains())
 		assert.NoError(t, c.checkValidationZones(context.Background()))
 	})
 
 	t.Run("discovery keeps every domain", func(t *testing.T) {
 		c := ACMCertificate{Name: "api.example.com", SAN: []string{"*.example.io"}}
-		c.Normalize(context.Background())
+		if err := c.Normalize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 		assert.Equal(t, []string{"api.example.com", "*.example.io"}, c.discoveredDomains())
 	})
 }
@@ -328,7 +357,7 @@ func TestACMCertificate_CompareExisting_Changes(t *testing.T) {
 			ValidationDomain: "default/example.com",
 			Tags:             map[string]string{"env": "new-env", "team": "example-team"},
 		}
-		c.Normalize(ctx)
+		require.NoError(t, c.Normalize(ctx))
 
 		existing := &acmtypes.CertificateDetail{
 			CertificateArn:          aws.String("arn:aws:acm:us-east-1:123456789012:certificate/example-cert"),
@@ -366,7 +395,7 @@ func TestACMCertificate_CompareExisting_Changes(t *testing.T) {
 
 	t.Run("domain name change", func(t *testing.T) {
 		c := ACMCertificate{Name: "example-cert", DomainName: "new.example.com", ValidationDomain: "default/example.com"}
-		c.Normalize(ctx)
+		require.NoError(t, c.Normalize(ctx))
 
 		existing := &acmtypes.CertificateDetail{
 			DomainName:              aws.String("old.example.com"),
@@ -383,7 +412,7 @@ func TestACMCertificate_CompareExisting_Changes(t *testing.T) {
 
 	t.Run("no difference records nothing", func(t *testing.T) {
 		c := ACMCertificate{Name: "api.example.com", SAN: []string{"www.example.com"}, ValidationDomain: "default/example.com"}
-		c.Normalize(ctx)
+		require.NoError(t, c.Normalize(ctx))
 
 		existing := &acmtypes.CertificateDetail{
 			DomainName:              aws.String("api.example.com"),

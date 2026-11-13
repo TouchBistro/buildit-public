@@ -33,9 +33,10 @@ type EFSMountTarget struct {
 }
 
 // Normalize sanitizes fields.
-func (r *EFSMountTarget) Normalize(ctx context.Context) {
+func (r *EFSMountTarget) Normalize(ctx context.Context) error {
 	r.SubnetName = strings.TrimSpace(r.SubnetName)
 	r.IpAddress = strings.TrimSpace(r.IpAddress)
+	return nil
 }
 
 // validate returns validation messages for this mount target, prefixed for the parent's report.

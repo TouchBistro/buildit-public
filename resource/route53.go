@@ -86,7 +86,7 @@ func (r Route53Record) Identifier() string {
 }
 
 // Normalize will set any default values.
-func (r *Route53Record) Normalize(ctx context.Context) {
+func (r *Route53Record) Normalize(ctx context.Context) error {
 
 	recordName := r.Identifier()
 	if r.RecordName != nil {
@@ -114,7 +114,11 @@ func (r *Route53Record) Normalize(ctx context.Context) {
 	// populate hosted zone to avoid multiple lookups; a caller that already resolved the
 	// zone (certificate validation records) sets hostedZoneId up front and skips the lookup
 	if r.hostedZoneId == nil {
-		hostedZoneId, err := awsw.NewRoute53(ctx, r.Context.ProviderName).FindHostedZoneIdForDomain(ctx, r.HostedZone)
+		route53Svc, err := awsw.NewRoute53(ctx, r.Context.ProviderName)
+		if err != nil {
+			return err
+		}
+		hostedZoneId, err := route53Svc.FindHostedZoneIdForDomain(ctx, r.HostedZone)
 		if err == nil {
 			r.hostedZoneId = hostedZoneId
 		}
@@ -123,6 +127,7 @@ func (r *Route53Record) Normalize(ctx context.Context) {
 	if r.TTL == nil {
 		r.TTL = aws.Int64(60)
 	}
+	return nil
 }
 
 // Validate checks that the Route53Record has a valid configuration.
@@ -261,8 +266,12 @@ func (r Route53Record) Destroy(ctx context.Context) error {
 // destroy the supplied route53 types/ResourceRecordset
 func (r Route53Record) destroy(ctx context.Context, existing *route53types.ResourceRecordSet) error {
 	log.Debugf("destroying existing route53 record %v", r.Identifier())
-	route53Client := client.Route53(ctx, r.Context.ProviderName)
-	_, err := route53Client.ChangeResourceRecordSets(ctx, &route53.ChangeResourceRecordSetsInput{
+	route53Client, err := client.Route53(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
+	_, err = route53Client.ChangeResourceRecordSets(ctx, &route53.ChangeResourceRecordSetsInput{
 		HostedZoneId: r.hostedZoneId,
 		ChangeBatch: &route53types.ChangeBatch{
 			Comment: aws.String("Removing DNS record from hosted zone"),
@@ -366,7 +375,7 @@ func (r Route53Record) compareRecordSets(existings []route53types.ResourceRecord
 	if len(existings) > 0 {
 		existing = &existings[0]
 	} else {
-		panic(fmt.Errorf("this error indicates a bad return values fetchExisting() was returned"))
+		return nil, errors.Errorf("no existing record returned for %v; this indicates a bug in fetchExisting", r.Identifier())
 	}
 
 	diffs.Resource = existings // for consistency, we always put an []types/RRSet for the existing
@@ -461,8 +470,7 @@ func (r Route53Record) compareRecordSets(existings []route53types.ResourceRecord
 		if r.Policy.SetIdentifier != util.Coalesce(existing.SetIdentifier, "") {
 			// this must never happen, since if defined & existing were both weighted routing,
 			// then the fetchExisting() should only returns when setIdentifier is the same
-			log.Warnf("invalid diff found, report this bug in route53 resource fetchExisting() logic")
-			panic(r)
+			return nil, errors.Errorf("invalid diff for %v: set identifier differs between defined and existing weighted records; this indicates a bug in fetchExisting", r.Identifier())
 		}
 	}
 
@@ -502,7 +510,11 @@ func recordValues(records []route53types.ResourceRecord) string {
 // exist, it means no existing record matches the definition & a nil result is returned.
 func (r Route53Record) fetchExisting(ctx context.Context) ([]route53types.ResourceRecordSet, error) {
 
-	route53Client := client.Route53(ctx, r.Context.ProviderName)
+	route53Client, err := client.Route53(ctx, r.Context.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+
 	recordName := r.fullRecordName()
 	out, err := route53Client.ListResourceRecordSets(ctx, &route53.ListResourceRecordSetsInput{
 		HostedZoneId:    r.hostedZoneId,
@@ -584,8 +596,12 @@ func (r Route53Record) apply(ctx context.Context) error {
 		recordSet.SetIdentifier = aws.String(r.Policy.SetIdentifier)
 	}
 
-	route53Client := client.Route53(ctx, r.Context.ProviderName)
-	_, err := route53Client.ChangeResourceRecordSets(ctx, &route53.ChangeResourceRecordSetsInput{
+	route53Client, err := client.Route53(ctx, r.Context.ProviderName)
+	if err != nil {
+		return err
+	}
+
+	_, err = route53Client.ChangeResourceRecordSets(ctx, &route53.ChangeResourceRecordSetsInput{
 		HostedZoneId: r.hostedZoneId,
 		ChangeBatch: &route53types.ChangeBatch{
 			Comment: aws.String("Attaching DNS record to hosted zone"),
@@ -652,7 +668,11 @@ func (r Route53Record) convertToAliasTarget(ctx context.Context) (*route53types.
 		log.Debug("resolving load balancer by name")
 		provider, lbName := ParseName(r.Destinations[0])
 
-		lb, err := awsw.NewELB(ctx, provider).FindLoadBalancerForName(ctx, lbName)
+		elbSvc, err := awsw.NewELB(ctx, provider)
+		if err != nil {
+			return nil, err
+		}
+		lb, err := elbSvc.FindLoadBalancerForName(ctx, lbName)
 		if err != nil {
 			return nil, errors.Wrapf(err, "couldn't find the referenced load balancer %v", r.Destinations[0])
 		}

@@ -38,8 +38,14 @@ func newAuditCommand(c *config.Container) *cobra.Command {
 				taskDefinitions := map[string]bool{}
 				log.Info("Auditing provider's resources\t", fmt.Sprintf("%v=%v", color.Cyan("provider"), p.Name))
 				// Initialize an AWS config and instantiate a resourcegroupstaggingapi client
-				rgtaClient := client.ResourceGroupsTaggingAPI(cmd.Context(), p.Name)
-				ecsClient := client.ECS(cmd.Context(), p.Name)
+				rgtaClient, err := client.ResourceGroupsTaggingAPI(cmd.Context(), p.Name)
+				if err != nil {
+					return err
+				}
+				ecsClient, err := client.ECS(cmd.Context(), p.Name)
+				if err != nil {
+					return err
+				}
 
 				var nextToken *string
 				for {

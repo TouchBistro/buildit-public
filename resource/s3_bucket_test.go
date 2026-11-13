@@ -13,7 +13,9 @@ func TestS3Bucket_Normalize(t *testing.T) {
 		b := &S3Bucket{
 			Bucket: "arn:aws:s3:::my-bucket",
 		}
-		b.Normalize(context.Background())
+		if err := b.Normalize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 		assert.Equal(t, "my-bucket", b.Bucket)
 	})
 
@@ -27,7 +29,9 @@ func TestS3Bucket_Normalize(t *testing.T) {
 				"Owner": "team-a",
 			},
 		}
-		b.Normalize(context.Background())
+		if err := b.Normalize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 		assert.Equal(t, "production", b.Tags["Environment"])
 		assert.Equal(t, "team-a", b.Tags["Owner"])
 	})
@@ -40,7 +44,9 @@ func TestS3Bucket_Normalize(t *testing.T) {
 			Bucket:     "arn:aws:s3:::example-bucket",
 			GlobalTags: map[string]string{util.BuilditResourceIDTagKey: "arn:aws:s3:::example-bucket"},
 		}
-		b.Normalize(context.Background())
+		if err := b.Normalize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 
 		assert.Equal(t, "example-bucket", b.Identifier())
 		assert.Equal(t, b.Identifier(), b.Tags[util.BuilditResourceIDTagKey])
@@ -52,7 +58,9 @@ func TestS3Bucket_Normalize(t *testing.T) {
 			Bucket:     "example-bucket",
 			GlobalTags: map[string]string{util.BuilditResourceIDTagKey: "example-bucket"},
 		}
-		b.Normalize(context.Background())
+		if err := b.Normalize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 
 		assert.Equal(t, "example-bucket", b.Tags[util.BuilditResourceIDTagKey])
 	})

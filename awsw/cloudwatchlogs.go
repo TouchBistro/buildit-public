@@ -17,8 +17,12 @@ type CloudWatchLogs struct {
 	*cloudwatchlogs.Client
 }
 
-func NewCloudWatchLogs(ctx context.Context, providerName string) CloudWatchLogs {
-	return CloudWatchLogs{client.CloudWatchLogs(ctx, providerName)}
+func NewCloudWatchLogs(ctx context.Context, providerName string) (CloudWatchLogs, error) {
+	c, err := client.CloudWatchLogs(ctx, providerName)
+	if err != nil {
+		return CloudWatchLogs{}, err
+	}
+	return CloudWatchLogs{c}, nil
 }
 
 // LogGroupArnForIdentifier resolves a CloudWatch Log Group ARN from an identifier (ARN or Name).
@@ -30,10 +34,12 @@ func (c CloudWatchLogs) LogGroupArnForIdentifier(ctx context.Context, identifier
 
 	cwlService := c
 	if provider != "" {
-		if _, err := client.Provider(provider); err != nil {
-			return nil, fmt.Errorf("provider %q not found: %w", provider, err)
+		var err error
+		cwlService, err = NewCloudWatchLogs(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		cwlService = NewCloudWatchLogs(ctx, provider)
+
 	}
 
 	// 1. Try Direct Lookup (pagination required to check all results)
