@@ -25,7 +25,7 @@ This package manages the loading, parsing, and validation of `buildit` configura
   with the other validation errors so every collision is reported in one run. Use
   `resourceTypeName` (yaml tag of `ResourceSet`) when a message needs to name a resource type
   the way the user wrote it.
-- **Two entry points, one pipeline**: `Parse` reads files; `NewConfig(rs ResourceSet, globalTags)`
+- **Two entry points, one pipeline**: `Parse` reads files; `FromResourceSet(rs, globalTags)`
   takes the same values built in Go (DEVOPS-8933, DEVOPS-9105; libbuildit consumers such as
   wafer, via the root `buildit` package). `CollectFiles` is `Parse` without `Generate`, so the two
   sources merge. Both produce a `Config` that `Generate` finishes in three steps: `mergeConfigs`
@@ -38,6 +38,24 @@ This package manages the loading, parsing, and validation of `buildit` configura
   changes both the YAML format and the Go API. Every resource type must have an `AddX` /
   `AddXWithProvider` pair in `resource_set.go` (`TestResourceSetAddMethodsCoverEveryType` fails
   otherwise).
+- **One implementation of the per-resource steps** (DEVOPS-8930): `graphBuilder` in `builder.go`
+  resolves provider and name, checks reserved (or unsupported) tags, applies `tagsFor`, calls
+  `Normalize` (an error is collected as `failed normalizing <type> "<name>"` and skips the
+  resource), checks buildit's tags landed, calls `Validate`, and adds the vertex. Every source
+  goes through `admit`: `buildGraph`'s loop per type and an override-added security group. A new
+  resource type is one loop in `buildGraph` naming its fields in a `wiring`; leave `globalTags`
+  out for a type AWS cannot tag, which is what switches the builder from applying tags to
+  rejecting them. Never repeat the steps inline. Nested sub-resource tags (EFS access points,
+  EventBridge targets) are checked in the type's loop before `admit`. `sqs-queue` sets
+  `skipValidate` because its `Validate` was never called at load; turning it on is a behaviour
+  change for existing configs. Resource types live in buildit: there is no way to add a type
+  from another module to a `ResourceSet`.
+- **Validation failures are a value**: `buildGraph` returns `ValidationErrors` (every failure,
+  `errors.As`-reachable) and logs nothing. `cmd/root.go` prints `Lines()` once and keeps the
+  one-line summary as the fatal error, so CLI output is unchanged. Do not log a failure where it
+  is collected. `Generate` also rejects a dependency cycle (in `graphBuilder.build`, once the
+  edges are in), so the CLI and library callers of `config.FromResourceSet` + `Generate` or
+  `buildit.NewConfig` all get it; `buildit validate` has no check of its own.
 - **Providers come from the awesome registry only.** The config holds nothing but the
   `providers:` entries of the files it read; everything else is resolved by name through
   `client.Provider`, which maps `main` to the registered `main` or else `default`, and buildit

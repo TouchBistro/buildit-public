@@ -18,7 +18,7 @@ import (
 )
 
 // Config is the merged, normalized and validated form of a buildit config: the resource
-// graph, the global tags and the providers. Parse builds one from files; NewConfig builds
+// graph, the global tags and the providers. Parse builds one from files; FromResourceSet builds
 // one from values constructed in Go, and the two may be combined (CollectFiles).
 type Config struct {
 	_config   []builditConfig
@@ -50,7 +50,7 @@ func (i Config) Providers() map[string]*client.AwsProvider {
 	return i.providers
 }
 
-// NewConfig builds a Config from values constructed in Go, the way Parse builds one from
+// FromResourceSet builds a Config from values constructed in Go, the way Parse builds one from
 // files, so a library consumer can reach Generate's output with no file I/O.
 //
 // rs and globalTags are what the `resources:` and `globalTags:` sections of a single
@@ -63,7 +63,7 @@ func (i Config) Providers() map[string]*client.AwsProvider {
 // There is no file content to hash, so the audit tag is derived from an empty SHA list.
 // A consumer that wants a meaningful audit value sets `audit` in globalTags, or passes
 // RootOptions.NoAuditTags.
-func NewConfig(rs ResourceSet, globalTags map[string]string) *Config {
+func FromResourceSet(rs ResourceSet, globalTags map[string]string) *Config {
 	ic := &Config{}
 	ic.Collect(builditConfig{
 		Resources:  rs,
@@ -153,838 +153,213 @@ func (i *Config) mergeConfigs(opts RootOptions) error {
 	return i.overrideProviders()
 }
 
-// buildGraph is Generate's third pass: every resource in every collected config is given
-// its effective provider and name, tagged, normalized and validated, then added to the
-// graph; the override's resources are applied and edges are built from the dependsOn
-// lists.
+// buildGraph is Generate's third pass: every resource in every collected config goes
+// through the graphBuilder's steps (provider and name, tags, Normalize, Validate, vertex);
+// the override's resources are applied and edges are built from the dependsOn lists.
+//
+// Each loop below only names the fields of its type the steps work on. A type AWS cannot
+// tag passes no globalTags, which is what makes the builder reject tags set on it instead
+// of applying buildit's. The steps themselves live in builder.go and nowhere else.
 //
 // It is separate from Generate so the wiring can be tested without the provider
 // initialization that sits between them, which calls STS. It expects mergeConfigs to have
 // run: a resource naming a provider that was never merged is rejected here.
+//
+// Validation failures come back as a ValidationErrors holding every one of them.
 func (i *Config) buildGraph(ctx context.Context) error {
-	// pass 3
-	// merge buildit configs
-	graph := &Graph{}
-	var validationErrs []error
-
-	// The tag checks below collect rather than return, so one run reports every problem in
-	// the config instead of stopping at the first.
-	addErr := func(err error) {
-		if err != nil {
-			validationErrs = append(validationErrs, err)
-		}
-	}
+	b := &graphBuilder{cfg: i, graph: &Graph{}}
 
 	for _, c := range i._config {
+		rs := c.Resources
 
-		for n, r := range c.Resources.BedrockApplicationInferenceProfile {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.BedrockApplicationInferenceProfile {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("bedrock-application-inference-profile", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing bedrock-application-inference-profile %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("bedrock-application-inference-profile", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.Certificate {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.Certificate {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("certificate", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing certificate %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("certificate", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.CloudfrontDistribution {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.CloudfrontDistribution {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("cloudfront-distribution", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing cloudfront-distribution %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("cloudfront-distribution", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.CloudfrontVpcOrigin {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.CloudfrontVpcOrigin {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("cloudfront-vpc-origin", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing cloudfront-vpc-origin %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("cloudfront-vpc-origin", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.CloudfrontFunction {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.CloudfrontFunction {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("cloudfront-function", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing cloudfront-function %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("cloudfront-function", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.CWLogGroup {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.CWLogGroup {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("cloudwatch-loggroup", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing cloudwatch-loggroup %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("cloudwatch-loggroup", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.CWMetricAlarm {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.CWMetricAlarm {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("cloudwatch-metricalarm", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing cloudwatch-metricalarm %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("cloudwatch-metricalarm", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.CWSubscriptionFilter {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.CWSubscriptionFilter {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn}); err != nil {
 				return err
 			}
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			if err := checkUnsupportedTags("cloudwatch-subscriptionfilter", n, r.Tags); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing cloudwatch-metricalarm %q", n))
-				continue
-			}
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.DynamoDB {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.DynamoDB {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("dynamodb-table", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing dynamodb-table %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("dynamodb-table", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.ECSService {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.ECSService {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("ecs-service", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing ecs-service %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("ecs-service", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.EFSFileSystem {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
-				return err
-			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("efs-filesystem", n, r.Tags))
+		for n, r := range rs.EFSFileSystem {
 			for idx, ap := range r.AccessPoints {
-				addErr(checkReservedTags("efs-filesystem", fmt.Sprintf("%v: accessPoints[%d]", n, idx), ap.Tags))
+				b.addErr(checkReservedTags("efs-filesystem", fmt.Sprintf("%v: accessPoints[%d]", n, idx), ap.Tags))
 			}
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing efs-filesystem %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("efs-filesystem", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
-		}
-
-		for n, r := range c.Resources.EventBridgeApiDestination {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			if err := checkUnsupportedTags("eventbridge-apidestination", n, r.Tags); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing efs-filesystem %q", n))
-				continue
-			}
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.EventBridgeRule {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.EventBridgeApiDestination {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("eventbridge-rule", n, r.Tags))
+		}
+		for n, r := range rs.EventBridgeRule {
 			for idx, t := range r.Targets {
-				addErr(checkReservedTags("eventbridge-rule", fmt.Sprintf("%v: targets[%d]", n, idx), t.Tags))
+				b.addErr(checkReservedTags("eventbridge-rule", fmt.Sprintf("%v: targets[%d]", n, idx), t.Tags))
 			}
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing eventbridge-rule %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("eventbridge-rule", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
-		}
-
-		for n, r := range c.Resources.EventBridgeConnection {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			// No tagsFor wiring or applied-check: AWS does not support tagging
-			// EventBridge connections. Checked before Normalize, which panics on a
-			// missing secret — the tags rejection must win over that.
-			if err := checkUnsupportedTags("eventbridge-connection", n, r.Tags); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing eventbridge-rule %q", n))
-				continue
-			}
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.FirehoseDeliveryStream {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.EventBridgeConnection {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("firehose-delivery-stream", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing firehose-delivery-stream %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("firehose-delivery-stream", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.IAMPolicy {
-
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.FirehoseDeliveryStream {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("iam-policy", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing iam-policy %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("iam-policy", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.IAMRole {
-
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.IAMPolicy {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("iam-role", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing iam-role %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("iam-role", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.LambdaFn {
-
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.IAMRole {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("lambda-function", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing lambda-function %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("lambda-function", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.LambdaLayer {
-
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.LambdaFn {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			// no tagsFor wiring: AWS does not support tagging lambda layers, see the
-			// lambda.Layer struct comment (DEVOPS-8900)
-			if err := checkUnsupportedTags("lambda-layer", n, r.Tags); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing lambda-function %q", n))
-				continue
-			}
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.LBTargetGroup {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.LambdaLayer {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("lb-targetgroup", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing lb-targetgroup %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("lb-targetgroup", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.LoadBalancer {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.LBTargetGroup {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("load-balancer", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing load-balancer %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("load-balancer", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.MSKConnector {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.LoadBalancer {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("msk-connector", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing msk-connector %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("msk-connector", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.MSKPlugin {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.MSKConnector {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("msk-plugin", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing msk-plugin %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("msk-plugin", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.MSKWorkerConfiguration {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.MSKPlugin {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("msk-worker-configuration", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing msk-worker-configuration %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("msk-worker-configuration", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.Route53Record {
-
-			// this is legacy; backward compatibility
-			// if we find a "::" in the resource defintion name then use that to infer provier/id, else use legacy '/'
-			delim := "::"
-			if index := strings.Index(n, delim); index == -1 {
-				delim = "/"
-			}
-
-			ePr, eId, err := i.getEffectiveProviderAndIdWithDelim(n, r.Context, delim)
-			if err != nil {
+		for n, r := range rs.MSKWorkerConfiguration {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			// if this r53 record has a recordName field that also contains a legacy '/' provider delim, we
-			// have to fetch the provider from here instead.
+		}
+		for n, r := range rs.Route53Record {
+			w := wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, legacyDelim: true}
+			// A recordName carrying the legacy `provider/` prefix names the provider.
 			if r.RecordName != nil && strings.Contains(*r.RecordName, "/") {
-				ePr, _, err = i.getEffectiveProviderAndIdWithDelim(*r.RecordName, r.Context, "/")
-				if err != nil {
-					return err
-				}
+				w.providerFrom = *r.RecordName
 			}
-
-			if err := checkUnsupportedTags("route53-record", n, r.Tags); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing msk-worker-configuration %q", n))
-				continue
-			}
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
-		}
-
-		for n, r := range c.Resources.S3Bucket {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+			if err := admit(ctx, b, n, &r, w); err != nil {
 				return err
 			}
-
-			r.Bucket = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("s3-bucket", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing s3-bucket %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("s3-bucket", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.SDService {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.S3Bucket {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Bucket, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("sd-service", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing sd-service %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("sd-service", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.SecurityGroup {
-
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.SDService {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("security-group", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing security-group %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("security-group", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.SQSQueue {
-
-			// this is legacy; backward compatibility
-			// if we find a "::" in the resource defintion name then use that to infer provier/id, else use legacy '/'
-			delim := "::"
-			if index := strings.Index(n, delim); index == -1 {
-				delim = "/"
-			}
-
-			// TODO this is to support existing /
-			ePr, eId, err := i.getEffectiveProviderAndIdWithDelim(n, r.Context, delim)
-			if err != nil {
+		for n, r := range rs.SecurityGroup {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("sqs-queue", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing sqs-queue %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("sqs-queue", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.SNSSubscription {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.SQSQueue {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags, legacyDelim: true, skipValidate: true}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			if err := checkUnsupportedTags("sns-subscription", n, r.Tags); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing sqs-queue %q", n))
-				continue
-			}
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.StandaloneTask {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.SNSSubscription {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("standalone-task", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing standalone-task %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("standalone-task", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.StateMachine {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.StandaloneTask {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("state-machine", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing state-machine %q", n))
-				continue
-			}
-			addErr(checkBuilditTagsApplied("state-machine", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
-
-		for n, r := range c.Resources.TaskDef {
-			ePr, eId, err := i.getEffectiveProviderAndId(n, r.Context)
-			if err != nil {
+		for n, r := range rs.StateMachine {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
 				return err
 			}
-
-			r.Name = *eId
-			r.Context.ProviderName = *ePr
-			addErr(checkReservedTags("taskdef", n, r.Tags))
-			r.GlobalTags = i.tagsFor(*eId)
-			if err := r.Normalize(ctx); err != nil {
-				validationErrs = append(validationErrs, errors.Wrapf(err, "failed normalizing taskdef %q", n))
-				continue
+		}
+		for n, r := range rs.TaskDef {
+			if err := admit(ctx, b, n, &r, wiring{name: &r.Name, context: &r.Context, tags: &r.Tags, dependsOn: &r.DependsOn, globalTags: &r.GlobalTags}); err != nil {
+				return err
 			}
-			addErr(checkBuilditTagsApplied("taskdef", n, r.Tags))
-			if err := r.Validate(ctx); err != nil {
-				validationErrs = append(validationErrs, err)
-				continue
-			}
-			addErr(graph.AddVertex(r, r.DependsOn))
 		}
 	}
 
-	i.graph = graph
-	// apply security group
-	if err := i.overrideSecurityGroups(ctx, addErr); err != nil {
+	i.graph = b.graph
+	if err := i.overrideSecurityGroups(ctx, b); err != nil {
 		return err
 	}
 
-	// Display all validation errors
-	// This way we can show all errors to the user, instead of
-	// exiting after the first one
-	if validationErrs != nil {
-		for _, err := range validationErrs {
-			if verr, ok := err.(*resource.ValidationError); ok {
-				log.Errorf("%v (%v)", verr.ResourceIdentifier, verr.ResourceType)
-				for _, err := range verr.Messages {
-					log.Errorf("\t %v\n", err)
-				}
-			} else {
-				log.Errorf("\t %v\n", err)
-			}
-		}
-		return errors.New("One or more resources failed validation")
+	if err := b.build(); err != nil {
+		return err
 	}
 
-	for to, deps := range graph.depdendencies {
-		for _, from := range deps {
-			err := i.graph.AddEdge(from, to)
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	log.Infof("%v resources read from buildit spec", graph.Size())
+	log.Infof("%v resources read from buildit spec", b.graph.Size())
 
 	return nil
 }
@@ -1181,10 +556,9 @@ func (i *Config) overrideProviders() error {
 }
 
 // overrideSecurityGroups applies the override config's security-group section to
-// the graph. Validation failures are reported through addErr, the same
-// accumulator Generate uses for every other resource, so an override-injected
-// resource that fails Validate fails the run like any other (DEVOPS-8901).
-func (i *Config) overrideSecurityGroups(ctx context.Context, addErr func(error)) error {
+// the graph. A security group the override adds goes through the builder like any
+// other resource, so one that fails Validate fails the run (DEVOPS-8901).
+func (i *Config) overrideSecurityGroups(ctx context.Context, b *graphBuilder) error {
 	ovverridPrefix := color.Yellow("** Override **")
 
 	if i._override != nil {
@@ -1192,14 +566,15 @@ func (i *Config) overrideSecurityGroups(ctx context.Context, addErr func(error))
 
 		// loop through
 		for securityGroupPattern, o_sg := range override.Resources.SecurityGroup {
-			// Checked here rather than per branch: a merge would strip a reserved key
-			// silently, and a new resource must be checked before Normalize adds ours.
-			addErr(checkReservedTags("security-group", securityGroupPattern, o_sg.Tags))
+			// A merge would strip a reserved key silently, so every pattern is checked;
+			// only a new resource is left to the builder, which checks it itself.
+			reserved := checkReservedTags("security-group", securityGroupPattern, o_sg.Tags)
 
 			switch securityGroupPattern {
 
 			// matches everything
 			case "*":
+				b.addErr(reserved)
 				for key, m_vertex := range i.graph.vertices {
 					if m_sg, ok := m_vertex.resource.(resource.SecurityGroup); ok { // if vertex is a security group
 						// log.Infof(ovverridPrefix+" merging security-group configuration for %q, matching ALL `*`", m_sg.Key())
@@ -1237,35 +612,18 @@ func (i *Config) overrideSecurityGroups(ctx context.Context, addErr func(error))
 					}
 				}
 
-				if !matched {
-					if validResourceIdentifier(securityGroupPattern) {
-
-						// TODO this is a terrible repetition of code.
-						// need to do something with this pattern (e.g.
-						// introduce & implement a ConfigurableResource interface???)
-						log.WithFields(log.Fields{color.Yellow("pattern"): securityGroupPattern}).Warnf("adding new security group configuration from overrides")
-
-						ePr, eId, err := i.getEffectiveProviderAndId(securityGroupPattern, o_sg.Context)
-						if err != nil {
-							return err
-						}
-
-						o_sg.Name = *eId
-						o_sg.Context.ProviderName = *ePr
-						o_sg.GlobalTags = i.tagsFor(*eId)
-						if err := o_sg.Normalize(ctx); err != nil {
-							addErr(errors.Wrapf(err, "failed normalizing security-group %q", securityGroupPattern))
-							continue
-						}
-						addErr(checkBuilditTagsApplied("security-group", securityGroupPattern, o_sg.Tags))
-						if err := o_sg.Validate(ctx); err != nil {
-							addErr(err)
-							continue
-						}
-						addErr(i.graph.AddVertex(o_sg, o_sg.DependsOn))
-					} else {
-						log.Debugf(ovverridPrefix+" no match for security-group pattern %q, and this is not an allowed resource name, skipping", securityGroupPattern)
+				if !matched && validResourceIdentifier(securityGroupPattern) {
+					log.WithFields(log.Fields{color.Yellow("pattern"): securityGroupPattern}).Warnf("adding new security group configuration from overrides")
+					w := wiring{name: &o_sg.Name, context: &o_sg.Context, tags: &o_sg.Tags, dependsOn: &o_sg.DependsOn, globalTags: &o_sg.GlobalTags}
+					if err := admit(ctx, b, securityGroupPattern, &o_sg, w); err != nil {
+						return err
 					}
+					continue
+				}
+
+				b.addErr(reserved)
+				if !matched {
+					log.Debugf(ovverridPrefix+" no match for security-group pattern %q, and this is not an allowed resource name, skipping", securityGroupPattern)
 				}
 			}
 		}

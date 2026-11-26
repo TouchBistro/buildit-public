@@ -14,7 +14,7 @@ import (
 // manages, keyed by the name the user declared it under (optionally `provider::name`).
 //
 // It is exported so a Go consumer can build the same object YAML parsing produces and hand
-// it to NewConfig, without writing a file (DEVOPS-8933); the AddX / AddXWithProvider
+// it to FromResourceSet, without writing a file (DEVOPS-8933); the AddX / AddXWithProvider
 // methods in resource_set.go are the way to fill it (DEVOPS-9105); they are not safe for
 // concurrent use, so populate a ResourceSet from one goroutine. The yaml tags are the
 // section names in buildit.yml and must stay in step with docs/resources/.

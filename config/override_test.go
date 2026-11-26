@@ -19,15 +19,6 @@ func overrideWithSecurityGroup(name string, sg resource.SecurityGroup) Config {
 	}
 }
 
-func collectErrs() (func(error), *[]error) {
-	var errs []error
-	return func(err error) {
-		if err != nil {
-			errs = append(errs, err)
-		}
-	}, &errs
-}
-
 // An override can append a brand-new security group when its name matches no
 // existing resource. Before DEVOPS-8901 the method took the error slice by value,
 // so a Validate failure on that group was appended to a local copy and lost: the
@@ -36,13 +27,13 @@ func TestOverrideSecurityGroupsReportsValidationErrors(t *testing.T) {
 	i := overrideWithSecurityGroup("example-invalid-sg", resource.SecurityGroup{
 		Description: "missing vpcName on purpose",
 	})
-	addErr, errs := collectErrs()
+	b := &graphBuilder{cfg: &i, graph: i.graph}
 
-	require.NoError(t, i.overrideSecurityGroups(context.Background(), addErr))
+	require.NoError(t, i.overrideSecurityGroups(context.Background(), b))
 
-	require.Len(t, *errs, 1)
+	require.Len(t, b.errs, 1)
 	var ve *resource.ValidationError
-	require.ErrorAs(t, (*errs)[0], &ve)
+	require.ErrorAs(t, b.errs[0], &ve)
 	assert.Equal(t, "example-invalid-sg", ve.ResourceIdentifier)
 	assert.Contains(t, ve.Messages, "vpc name must be supplied to create a security group")
 	assert.Equal(t, 0, i.graph.Size(), "an invalid override resource must not reach the graph")
@@ -55,12 +46,12 @@ func TestOverrideSecurityGroupsReportsReservedTags(t *testing.T) {
 		VPCName: "example-vpc",
 		Tags:    map[string]string{util.BuilditTagPrefix + "owner": "example-team"},
 	})
-	addErr, errs := collectErrs()
+	b := &graphBuilder{cfg: &i, graph: i.graph}
 
-	require.NoError(t, i.overrideSecurityGroups(context.Background(), addErr))
+	require.NoError(t, i.overrideSecurityGroups(context.Background(), b))
 
-	require.Len(t, *errs, 1)
-	assert.Contains(t, (*errs)[0].Error(), util.BuilditTagPrefix+"owner")
+	require.Len(t, b.errs, 1)
+	assert.Contains(t, b.errs[0].Error(), util.BuilditTagPrefix+"owner")
 }
 
 func TestOverrideSecurityGroupsAddsValidResource(t *testing.T) {
@@ -68,11 +59,11 @@ func TestOverrideSecurityGroupsAddsValidResource(t *testing.T) {
 		Description: "a valid override group",
 		VPCName:     "example-vpc",
 	})
-	addErr, errs := collectErrs()
+	b := &graphBuilder{cfg: &i, graph: i.graph}
 
-	require.NoError(t, i.overrideSecurityGroups(context.Background(), addErr))
+	require.NoError(t, i.overrideSecurityGroups(context.Background(), b))
 
-	assert.Empty(t, *errs)
+	assert.Empty(t, b.errs)
 	require.Equal(t, 1, i.graph.Size())
 	got, err := i.graph.GetVertex(resource.NewKey("main", "example-sg"))
 	require.NoError(t, err)
@@ -100,11 +91,11 @@ func overrideOnGraph(g *Graph, pattern string, sg resource.SecurityGroup) Config
 func TestOverrideSecurityGroupsWildcardWritesBack(t *testing.T) {
 	g := graphWithSecurityGroup(t, "example-sg")
 	i := overrideOnGraph(g, "*", resource.SecurityGroup{Description: "overridden"})
-	addErr, errs := collectErrs()
+	b := &graphBuilder{cfg: &i, graph: i.graph}
 
-	require.NoError(t, i.overrideSecurityGroups(context.Background(), addErr))
+	require.NoError(t, i.overrideSecurityGroups(context.Background(), b))
 
-	assert.Empty(t, *errs)
+	assert.Empty(t, b.errs)
 	got, err := g.GetVertex(resource.NewKey("main", "example-sg"))
 	require.NoError(t, err)
 	assert.Equal(t, "overridden", got.(resource.SecurityGroup).Description)
@@ -121,11 +112,11 @@ func TestOverrideSecurityGroupsMergedDependsOnBecomesEdge(t *testing.T) {
 		t.Run(pattern, func(t *testing.T) {
 			g := graphWithSecurityGroup(t, "example-sg")
 			i := overrideOnGraph(g, pattern, resource.SecurityGroup{DependsOn: []resource.Key{dep}})
-			addErr, errs := collectErrs()
+			b := &graphBuilder{cfg: &i, graph: i.graph}
 
-			require.NoError(t, i.overrideSecurityGroups(context.Background(), addErr))
+			require.NoError(t, i.overrideSecurityGroups(context.Background(), b))
 
-			assert.Empty(t, *errs)
+			assert.Empty(t, b.errs)
 			got, err := g.GetVertex(key)
 			require.NoError(t, err)
 			assert.Equal(t, []resource.Key{dep}, got.(resource.SecurityGroup).DependsOn)
@@ -141,12 +132,12 @@ func TestOverrideSecurityGroupsReportsReservedTagsOnMerge(t *testing.T) {
 	i := overrideOnGraph(g, "example-sg", resource.SecurityGroup{
 		Tags: map[string]string{util.BuilditTagPrefix + "owner": "example-team"},
 	})
-	addErr, errs := collectErrs()
+	b := &graphBuilder{cfg: &i, graph: i.graph}
 
-	require.NoError(t, i.overrideSecurityGroups(context.Background(), addErr))
+	require.NoError(t, i.overrideSecurityGroups(context.Background(), b))
 
-	require.Len(t, *errs, 1)
-	assert.Contains(t, (*errs)[0].Error(), util.BuilditTagPrefix+"owner")
+	require.Len(t, b.errs, 1)
+	assert.Contains(t, b.errs[0].Error(), util.BuilditTagPrefix+"owner")
 }
 
 // An override that appends a new group under a name another resource already
@@ -156,12 +147,12 @@ func TestOverrideSecurityGroupsReportsKeyCollision(t *testing.T) {
 	g := &Graph{}
 	require.NoError(t, g.AddVertex(resource.S3Bucket{Bucket: "example-thing"}, nil))
 	i := overrideOnGraph(g, "example-thing", resource.SecurityGroup{VPCName: "example-vpc"})
-	addErr, errs := collectErrs()
+	b := &graphBuilder{cfg: &i, graph: i.graph}
 
-	require.NoError(t, i.overrideSecurityGroups(context.Background(), addErr))
+	require.NoError(t, i.overrideSecurityGroups(context.Background(), b))
 
-	require.Len(t, *errs, 1)
-	assert.Contains(t, (*errs)[0].Error(), `s3-bucket "example-thing" and security-group "example-thing"`)
+	require.Len(t, b.errs, 1)
+	assert.Contains(t, b.errs[0].Error(), `s3-bucket "example-thing" and security-group "example-thing"`)
 	got, err := g.GetVertex(resource.NewKey("main", "example-thing"))
 	require.NoError(t, err)
 	assert.IsType(t, resource.S3Bucket{}, got, "the existing resource must not be overwritten")

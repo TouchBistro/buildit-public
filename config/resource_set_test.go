@@ -37,7 +37,7 @@ func TestNewConfigBuildsGraph(t *testing.T) {
 	first := resource.NewKey("main", "example-logs")
 	second := resource.NewKey("main", "example-logs-2")
 
-	i := NewConfig(ResourceSet{
+	i := FromResourceSet(ResourceSet{
 		CWLogGroup: map[string]resource.CWLogGroup{
 			"example-logs":   logGroup(""),
 			"example-logs-2": logGroup("", first),
@@ -84,7 +84,7 @@ func offlineProvider(t *testing.T, name string) providers.CredsProvider {
 // name that is neither is rejected while the graph is built.
 func TestNewConfigAcceptsRegisteredProviders(t *testing.T) {
 	offlineProvider(t, "example")
-	i := NewConfig(ResourceSet{
+	i := FromResourceSet(ResourceSet{
 		CWLogGroup: map[string]resource.CWLogGroup{
 			"example::example-logs": logGroup(""),
 		},
@@ -97,7 +97,7 @@ func TestNewConfigAcceptsRegisteredProviders(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "example", got.(resource.CWLogGroup).Context.ProviderName)
 
-	i = NewConfig(ResourceSet{
+	i = FromResourceSet(ResourceSet{
 		CWLogGroup: map[string]resource.CWLogGroup{
 			"example-unregistered::example-logs": logGroup(""),
 		},
@@ -108,7 +108,7 @@ func TestNewConfigAcceptsRegisteredProviders(t *testing.T) {
 }
 
 func TestNewConfigRejectsUnknownProvider(t *testing.T) {
-	i := NewConfig(ResourceSet{
+	i := FromResourceSet(ResourceSet{
 		CWLogGroup: map[string]resource.CWLogGroup{"example-logs": logGroup("other")},
 	}, nil)
 
@@ -121,7 +121,7 @@ func TestNewConfigRejectsUnknownProvider(t *testing.T) {
 func TestNewConfigReportsValidationErrors(t *testing.T) {
 	bad := logGroup("")
 	bad.Retention = aws.Int32(2)
-	i := NewConfig(ResourceSet{
+	i := FromResourceSet(ResourceSet{
 		CWLogGroup: map[string]resource.CWLogGroup{"example-logs": bad},
 	}, nil)
 
@@ -133,7 +133,7 @@ func TestNewConfigReportsValidationErrors(t *testing.T) {
 // The reserved-tag check happens before provider initialization, so the public Generate
 // path fails fast on a bad globalTags map with no AWS call.
 func TestNewConfigRejectsReservedGlobalTags(t *testing.T) {
-	i := NewConfig(ResourceSet{}, map[string]string{util.BuilditTagPrefix + "owner": "example-team"})
+	i := FromResourceSet(ResourceSet{}, map[string]string{util.BuilditTagPrefix + "owner": "example-team"})
 
 	err := i.Generate(context.Background(), RootOptions{NoAuditTags: true})
 	require.Error(t, err)
@@ -144,13 +144,13 @@ func TestNewConfigRejectsReservedGlobalTags(t *testing.T) {
 // consumer-supplied value wins, matching the behaviour for parsed configs.
 func TestNewConfigAuditTag(t *testing.T) {
 	t.Run("derived when absent", func(t *testing.T) {
-		i := NewConfig(ResourceSet{}, nil)
+		i := FromResourceSet(ResourceSet{}, nil)
 		require.NoError(t, generateOffline(t, i, RootOptions{}))
 		assert.NotEmpty(t, i.Tags()["audit"])
 	})
 
 	t.Run("kept when supplied", func(t *testing.T) {
-		i := NewConfig(ResourceSet{}, map[string]string{"audit": "example-hash"})
+		i := FromResourceSet(ResourceSet{}, map[string]string{"audit": "example-hash"})
 		require.NoError(t, generateOffline(t, i, RootOptions{}))
 		assert.Equal(t, "example-hash", i.Tags()["audit"])
 	})
@@ -210,7 +210,7 @@ func TestNewConfigUsesResourceSetProviders(t *testing.T) {
 	p := offlineProvider(t, "example-rs")
 	require.NoError(t, rs.AddCWLogGroupWithProvider(p, "example-logs", logGroup("")))
 
-	i := NewConfig(rs, nil)
+	i := FromResourceSet(rs, nil)
 	require.NoError(t, generateOffline(t, i, RootOptions{NoAuditTags: true}))
 
 	got, err := i.Graph().GetVertex(resource.NewKey("example-rs", "example-logs"))

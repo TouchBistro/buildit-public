@@ -152,6 +152,24 @@ name, applies global and `buildit:` tags, normalizes, validates, and builds the 
 registry holds under that name, and fails if an older provider object has since been replaced
 there by a newer build of the same name.
 
+When resources fail validation, the error is a `buildit.ValidationErrors`: one entry per failure,
+so a program can name every resource that failed without reading a log.
+
+```go
+var failed buildit.ValidationErrors
+if errors.As(err, &failed) {
+    for _, e := range failed {
+        var v *resource.ValidationError
+        if errors.As(e, &v) {
+            fmt.Println(v.ResourceIdentifier, v.Messages)
+        }
+    }
+}
+```
+
+A dependency cycle between resources is also an error from `NewConfig`, and from every CLI
+command when the config is loaded: `dependency cycle between resources: main::a -> main::b -> main::a`.
+
 Config files can be merged into the same `Config`, rendered with variables and templates the way
 the CLI flags of the same names do. A provider declared in a config file's `providers:` section
 replaces a registered one of the same name, with a warning.

@@ -34,7 +34,6 @@ package buildit
 
 import (
 	"context"
-
 	"github.com/TouchBistro/buildit/config"
 	"github.com/TouchBistro/buildit/util"
 	"github.com/pkg/errors"
@@ -49,6 +48,10 @@ type Config = config.Config
 // available for a consumer that wants to build them directly.
 type ResourceSet = config.ResourceSet
 
+// ValidationErrors is the error NewConfig returns when resources fail validation. It
+// holds one error per failure, each reachable with errors.As.
+type ValidationErrors = config.ValidationErrors
+
 // Graph is the dependency graph of a Config's resources.
 type Graph = config.Graph
 
@@ -56,7 +59,8 @@ type Graph = config.Graph
 // are rendered and merged in, `default` is built unless one is registered, the providers
 // declared in the files are initialized, and every resource is given its provider and
 // tags, normalized and validated, and wired into the graph. Any problem found on the way
-// is returned, so a Config that comes back is ready to plan or apply.
+// is returned, so a Config that comes back is ready to plan or apply: resources that fail
+// validation come back together as a ValidationErrors, and a dependency cycle is an error.
 //
 // Providers come from the awesome providers registry; see the package documentation for
 // the reserved names. A resource naming a provider that is not registered (and not
@@ -70,7 +74,7 @@ func NewConfig(ctx context.Context, rs ResourceSet, opts ...Option) (*Config, er
 		return nil, err
 	}
 
-	cfg := config.NewConfig(rs, o.globalTags)
+	cfg := config.FromResourceSet(rs, o.globalTags)
 	if len(o.root.ConfigPath) > 0 {
 		tokens, err := util.LoadVariables(o.root.VariablesPath, o.root.UseEnvars, o.root.Variables...)
 		if err != nil {

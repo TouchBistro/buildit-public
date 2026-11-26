@@ -35,7 +35,7 @@ func Parse(ctx context.Context, opts RootOptions, tokens map[string]any) (*Confi
 // CollectFiles reads every config file under opts.ConfigPath, rendered with the templates
 // or includes and the variable tokens, and collects each alongside whatever the Config
 // already holds; the override file, if any, replaces the current override. It is Parse
-// without Generate, so a Go-built config (NewConfig) can take files as a further source.
+// without Generate, so a Go-built config (FromResourceSet) can take files as a further source.
 func (i *Config) CollectFiles(opts RootOptions, tokens map[string]any) error {
 	// collect files from all supplied paths
 	var configFileNames []string

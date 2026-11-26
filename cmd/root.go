@@ -223,6 +223,15 @@ func getRootPersistentPreRunE(opts *config.RootOptions, c *config.Container) fun
 
 		var internal_config *config.Config
 		if internal_config, err = config.Parse(ctx, *opts, tokens); err != nil {
+			// Every failed resource is printed once, here; the error itself stays the
+			// one-line summary.
+			var verrs config.ValidationErrors
+			if errors.As(err, &verrs) {
+				for _, line := range verrs.Lines() {
+					log.Error(line)
+				}
+				err = errors.New(verrs.Summary())
+			}
 			return &fatal.Error{
 				Msg: "failed to parse buildit config",
 				Err: err,
